@@ -29,7 +29,7 @@ addons, because they register overlapping import/export menus and modules.
 
 ## Current Scope
 
-Addon version: `1.2.19`
+Addon version: `1.2.20`
 
 Kept:
 
@@ -55,6 +55,11 @@ Kept:
 - Export refuses unapplied mesh/armature object transforms and non-rest
   pose-mode bones, because those make Blender display a pose that `.geom`
   export cannot currently bake.
+- A `DSTS` tab in the 3D View sidebar (`N`) provides safe workflow buttons for
+  applying the visible pose as rest pose, clearing pose transforms, applying
+  mesh object transforms, checking export readiness, linking selected objects
+  into the Geom collection, and loading extracted video frames as viewport
+  references.
 
 Removed from the active addon:
 
@@ -62,9 +67,9 @@ Removed from the active addon:
 - `src/dsts_py` and `py_geom_*` modules.
 - Template-backed custom `.geom` export for arbitrary Blender models.
 - One-button custom Digimon export automation.
-- Prepare/borrow/retarget/check setup operators.
-- Model scale fitting, target material generation, root locks, LOD fallback
-  copying, neutral base animation synthesis, and New Century action automation.
+- Legacy material borrowing/retargeting, model scale fitting, target material
+  generation, root locks, LOD fallback copying, neutral base animation
+  synthesis, and New Century action automation.
 
 Custom model packaging should currently be handled outside this clean addon
 with dedicated helper tools and known-good patch references.
@@ -104,6 +109,12 @@ File > Export > Digimon Time Stranger (.geom, .anim) > Animation (.anim)
 File > Export > Digimon Time Stranger (.geom, .anim) > All Animations (.anim)
 ```
 
+Sidebar:
+
+```text
+3D View > N > DSTS > Time Stranger
+```
+
 ## Practical Checks
 
 - Import a real game `.geom` before exporting; export expects DSTS metadata that
@@ -119,5 +130,14 @@ File > Export > Digimon Time Stranger (.geom, .anim) > All Animations (.anim)
   the export armature first. Object transforms should be applied, and pose bones
   should be clear unless you intentionally used Pose > Apply > Apply Pose as
   Rest Pose.
+- The sidebar `Pose As Rest` button performs the same pose bake that fixed the
+  Zeak/Youkomon test export. Use `Clear Pose` if the current pose should not be
+  exported.
+- The sidebar frame reference loader defaults to:
+
+```text
+D:\Digimon Modding\Models Workshop\Video Tutorials\Extracted Frames
+```
+
 - `src/utils.py` already handles the DSTS axis conversion with `flop` and
   `unflop`; do not change those functions to fix a scene pose problem.

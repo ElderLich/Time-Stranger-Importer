@@ -7,14 +7,15 @@ import bpy
 import os
 import re
 from bpy_extras.io_utils import ImportHelper, ExportHelper
-from bpy.props import StringProperty, EnumProperty, BoolProperty
-from bpy.types import Operator
+from bpy.props import StringProperty, EnumProperty, BoolProperty, IntProperty, FloatProperty
+from bpy.types import Operator, Panel
+from mathutils import Matrix
 from .src.blender_compat import create_action_fcurve, create_nla_track, iter_action_fcurves
 
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 2, 19),
+    "version": (1, 2, 20),
     "blender": (4, 5, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -22,6 +23,253 @@ bl_info = {
 }
 
 _ACTION_BONE_RE = re.compile(r'pose\.bones\["([^"]+)"\]')
+_IDENTITY_4X4 = Matrix.Identity(4)
+_GEOM_METADATA_KEYS = ("unknown_0x10", "unknown_0x30", "unknown_0x34", "CLUT")
+_DEFAULT_FRAME_FOLDER = r"D:\Digimon Modding\Models Workshop\Video Tutorials\Extracted Frames"
+_FRAME_REFERENCE_NAME = "DSTS_Frame_Reference"
+
+
+def _matrix_is_identity(matrix, epsilon=1e-5):
+    for row in range(4):
+        for col in range(4):
+            if abs(matrix[row][col] - _IDENTITY_4X4[row][col]) > epsilon:
+                return False
+    return True
+
+
+def _imported_geom_collections():
+    return [col for col in bpy.data.collections if all(key in col for key in _GEOM_METADATA_KEYS)]
+
+
+def _active_geom_collection(context):
+    geom = bpy.data.collections.get("Geom")
+    if geom and all(key in geom for key in _GEOM_METADATA_KEYS):
+        return geom
+
+    active = getattr(context, "object", None)
+    if active:
+        for collection in active.users_collection:
+            if all(key in collection for key in _GEOM_METADATA_KEYS):
+                return collection
+
+    collections = _imported_geom_collections()
+    return collections[0] if collections else geom
+
+
+def _geom_collection_items(self, context):
+    items = [(col.name, col.name, "") for col in _imported_geom_collections()]
+    geom = bpy.data.collections.get("Geom")
+    if geom and not any(name == geom.name for name, _label, _desc in items):
+        items.insert(0, (geom.name, geom.name, "Geom collection without full DSTS metadata"))
+    return items or [("__NONE__", "No Geom collection found", "Import a .geom first")]
+
+
+def _find_workflow_armature(context, collection=None):
+    active = getattr(context, "object", None)
+    if active and active.type == "ARMATURE":
+        return active
+
+    selected = [obj for obj in getattr(context, "selected_objects", []) if obj.type == "ARMATURE"]
+    if selected:
+        return selected[0]
+
+    if collection:
+        armatures = [obj for obj in collection.objects if obj.type == "ARMATURE"]
+        if armatures:
+            return armatures[0]
+
+    armatures = [obj for obj in bpy.data.objects if obj.type == "ARMATURE"]
+    return armatures[0] if len(armatures) == 1 else None
+
+
+def _posed_bones(armature):
+    if not armature or armature.type != "ARMATURE" or not armature.pose:
+        return []
+    return [pose_bone for pose_bone in armature.pose.bones if not _matrix_is_identity(pose_bone.matrix_basis)]
+
+
+def _objects_with_unapplied_transforms(collection, object_types):
+    if not collection:
+        return []
+    return [
+        obj for obj in collection.objects
+        if obj.type in object_types and not _matrix_is_identity(obj.matrix_basis)
+    ]
+
+
+def _ensure_object_mode(context):
+    active = getattr(context, "object", None)
+    if active and active.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def _link_selected_to_collection(context, collection):
+    candidates = [obj for obj in context.selected_objects if obj.type in {"MESH", "ARMATURE"}]
+    linked = 0
+    for obj in candidates:
+        if not any(existing == obj for existing in collection.objects):
+            collection.objects.link(obj)
+            linked += 1
+    return len(candidates), linked
+
+
+def _apply_pose_as_rest(context, armature):
+    posed_count = len(_posed_bones(armature))
+    if posed_count == 0:
+        return 0
+    _ensure_object_mode(context)
+    previous_selection = list(context.selected_objects)
+    previous_active = context.view_layer.objects.active
+    bpy.ops.object.select_all(action='DESELECT')
+    armature.select_set(True)
+    context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='POSE')
+    bpy.ops.pose.armature_apply(selected=False)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in previous_selection:
+        if obj.name in bpy.data.objects:
+            obj.select_set(True)
+    if previous_active and previous_active.name in bpy.data.objects:
+        context.view_layer.objects.active = previous_active
+    return posed_count
+
+
+def _clear_armature_pose(armature):
+    changed = 0
+    for pose_bone in armature.pose.bones:
+        if _matrix_is_identity(pose_bone.matrix_basis):
+            continue
+        pose_bone.location = (0.0, 0.0, 0.0)
+        pose_bone.scale = (1.0, 1.0, 1.0)
+        if pose_bone.rotation_mode == 'QUATERNION':
+            pose_bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        elif pose_bone.rotation_mode == 'AXIS_ANGLE':
+            pose_bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
+        else:
+            pose_bone.rotation_euler = (0.0, 0.0, 0.0)
+        changed += 1
+    return changed
+
+
+def _apply_mesh_object_transforms(context, collection):
+    meshes = _objects_with_unapplied_transforms(collection, {"MESH"})
+    if not meshes:
+        return 0
+    _ensure_object_mode(context)
+    previous_selection = list(context.selected_objects)
+    previous_active = context.view_layer.objects.active
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in meshes:
+        obj.select_set(True)
+    context.view_layer.objects.active = meshes[0]
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True, properties=True)
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in previous_selection:
+        if obj.name in bpy.data.objects:
+            obj.select_set(True)
+    if previous_active and previous_active.name in bpy.data.objects:
+        context.view_layer.objects.active = previous_active
+    return len(meshes)
+
+
+def _natural_sort_key(path):
+    name = os.path.basename(path)
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name)]
+
+
+def _frame_files(folder):
+    folder = bpy.path.abspath(str(folder or ""))
+    if not folder or not os.path.isdir(folder):
+        return []
+    exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+    files = [
+        os.path.join(folder, name)
+        for name in os.listdir(folder)
+        if os.path.splitext(name)[1].lower() in exts
+    ]
+    return sorted(files, key=_natural_sort_key)
+
+
+def _load_frame_reference(context, offset=0):
+    scene = context.scene
+    files = _frame_files(scene.dsts_frame_folder)
+    if not files:
+        raise RuntimeError("No image frames found in the selected folder")
+    index = max(1, min(int(scene.dsts_frame_index) + offset, len(files)))
+    scene.dsts_frame_index = index
+    path = files[index - 1]
+    image = bpy.data.images.load(path, check_existing=True)
+
+    obj = bpy.data.objects.get(_FRAME_REFERENCE_NAME)
+    if obj is None:
+        obj = bpy.data.objects.new(_FRAME_REFERENCE_NAME, None)
+        context.scene.collection.objects.link(obj)
+        obj.empty_display_type = 'IMAGE'
+        obj.location = (0.0, 0.0, 1.0)
+    obj.empty_display_type = 'IMAGE'
+    obj.data = image
+    obj.empty_display_size = float(scene.dsts_frame_reference_size)
+    obj.show_in_front = True
+    if hasattr(obj, "empty_image_alpha"):
+        obj.empty_image_alpha = float(scene.dsts_frame_reference_alpha)
+    context.view_layer.objects.active = obj
+    obj.select_set(True)
+    return path, index, len(files)
+
+
+def _readiness_report(context, collection):
+    lines = []
+    warnings = []
+    if not collection:
+        return ["No Geom collection found."], ["Import a .geom first."]
+
+    lines.append(f"Collection: {collection.name}")
+    missing_metadata = [key for key in _GEOM_METADATA_KEYS if key not in collection]
+    if missing_metadata:
+        warnings.append(f"Missing DSTS metadata: {', '.join(missing_metadata)}")
+
+    meshes = [obj for obj in collection.objects if obj.type == "MESH"]
+    armature = _find_workflow_armature(context, collection)
+    lines.append(f"Meshes: {len(meshes)}")
+    lines.append(f"Armature: {armature.name if armature else '(none)'}")
+
+    for obj in _objects_with_unapplied_transforms(collection, {"MESH", "ARMATURE"}):
+        warnings.append(f"{obj.name}: object transform is not applied")
+
+    if armature:
+        posed = _posed_bones(armature)
+        if posed:
+            warnings.append(f"{armature.name}: {len(posed)} pose bone(s) are not rest-pose")
+    else:
+        warnings.append("No export armature found")
+
+    for mesh_obj in meshes:
+        if not mesh_obj.data.materials or not mesh_obj.data.materials[0]:
+            warnings.append(f"{mesh_obj.name}: no material assigned")
+        if not mesh_obj.data.uv_layers:
+            warnings.append(f"{mesh_obj.name}: no UV layers")
+        elif mesh_obj.data.uv_layers[0].name != "uv1":
+            warnings.append(f"{mesh_obj.name}: first UV is '{mesh_obj.data.uv_layers[0].name}', expected 'uv1'")
+        if not mesh_obj.vertex_groups:
+            warnings.append(f"{mesh_obj.name}: no vertex groups")
+
+    return lines, warnings
+
+
+def _write_readiness_text(lines, warnings):
+    text = bpy.data.texts.get("DSTS Export Readiness") or bpy.data.texts.new("DSTS Export Readiness")
+    text.clear()
+    text.write("DSTS Export Readiness\n\n")
+    for line in lines:
+        text.write(line + "\n")
+    text.write("\nWarnings\n")
+    if warnings:
+        for warning in warnings:
+            text.write(f"- {warning}\n")
+    else:
+        text.write("- None\n")
+    return text
 
 
 def build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=30.0):
@@ -597,6 +845,264 @@ class DSTS_OT_ExportAll(Operator, ExportHelper):
 
 
 # =============================================================================
+# VIEWPORT WORKFLOW OPERATORS
+# =============================================================================
+
+class DSTS_OT_PrepareSelectedAsGeom(Operator):
+    """Link selected mesh/armature objects into the active Geom collection"""
+    bl_idname = "object.dsts_prepare_selected_as_geom"
+    bl_label = "Prepare Selected As Geom"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        collection = _active_geom_collection(context)
+        if collection is None:
+            collection = bpy.data.collections.new("Geom")
+            context.scene.collection.children.link(collection)
+
+        total, linked = _link_selected_to_collection(context, collection)
+        if total == 0:
+            self.report({'ERROR'}, "Select at least one mesh or armature")
+            return {'CANCELLED'}
+
+        if not all(key in collection for key in _GEOM_METADATA_KEYS):
+            self.report({'WARNING'}, f"Linked {linked} object(s), but '{collection.name}' has no imported .geom metadata")
+        else:
+            self.report({'INFO'}, f"Linked {linked} object(s) into '{collection.name}'")
+        return {'FINISHED'}
+
+
+class DSTS_OT_ApplyPoseAsRest(Operator):
+    """Apply the current export-armature pose as the new rest pose"""
+    bl_idname = "object.dsts_apply_pose_as_rest"
+    bl_label = "Apply Visible Pose As Rest"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        collection = _active_geom_collection(context)
+        armature = _find_workflow_armature(context, collection)
+        if armature is None:
+            self.report({'ERROR'}, "No armature found")
+            return {'CANCELLED'}
+
+        try:
+            posed_count = _apply_pose_as_rest(context, armature)
+        except Exception as exc:
+            print(f"[DSTS] Apply pose as rest failed: {exc}")
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+        if posed_count == 0:
+            self.report({'INFO'}, f"{armature.name} already has a clear rest pose")
+        else:
+            self.report({'INFO'}, f"Applied {posed_count} posed bone(s) as rest pose on {armature.name}")
+        return {'FINISHED'}
+
+
+class DSTS_OT_ClearExportPose(Operator):
+    """Clear pose transforms from the export armature"""
+    bl_idname = "object.dsts_clear_export_pose"
+    bl_label = "Clear Export Pose"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        collection = _active_geom_collection(context)
+        armature = _find_workflow_armature(context, collection)
+        if armature is None:
+            self.report({'ERROR'}, "No armature found")
+            return {'CANCELLED'}
+
+        changed = _clear_armature_pose(armature)
+        if changed == 0:
+            self.report({'INFO'}, f"{armature.name} pose is already clear")
+        else:
+            self.report({'INFO'}, f"Cleared {changed} posed bone(s) on {armature.name}")
+        return {'FINISHED'}
+
+
+class DSTS_OT_ApplyMeshObjectTransforms(Operator):
+    """Apply location, rotation, and scale on mesh objects in the Geom collection"""
+    bl_idname = "object.dsts_apply_mesh_object_transforms"
+    bl_label = "Apply Mesh Object Transforms"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        collection = _active_geom_collection(context)
+        if collection is None:
+            self.report({'ERROR'}, "No Geom collection found")
+            return {'CANCELLED'}
+
+        try:
+            changed = _apply_mesh_object_transforms(context, collection)
+        except Exception as exc:
+            print(f"[DSTS] Apply mesh transforms failed: {exc}")
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+        if changed == 0:
+            self.report({'INFO'}, "Mesh object transforms are already applied")
+        else:
+            self.report({'INFO'}, f"Applied object transforms on {changed} mesh object(s)")
+        return {'FINISHED'}
+
+
+class DSTS_OT_RunBasicModelPrep(Operator):
+    """Run the noob-safe prep sequence for the current Geom collection"""
+    bl_idname = "object.dsts_run_basic_model_prep"
+    bl_label = "Run Basic Model Prep"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    link_selected: BoolProperty(
+        name="Link Selected",
+        description="Link selected mesh/armature objects into the Geom collection first",
+        default=True,
+    )
+
+    apply_pose_as_rest: BoolProperty(
+        name="Apply Pose As Rest",
+        description="Bake the visible armature pose into the rest pose before export",
+        default=True,
+    )
+
+    apply_mesh_transforms: BoolProperty(
+        name="Apply Mesh Transforms",
+        description="Apply mesh object location, rotation, and scale",
+        default=True,
+    )
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.prop(self, "link_selected")
+        layout.prop(self, "apply_pose_as_rest")
+        layout.prop(self, "apply_mesh_transforms")
+
+    def execute(self, context):
+        collection = _active_geom_collection(context)
+        if collection is None:
+            collection = bpy.data.collections.new("Geom")
+            context.scene.collection.children.link(collection)
+
+        linked = 0
+        selected = 0
+        if self.link_selected:
+            selected, linked = _link_selected_to_collection(context, collection)
+
+        armature = _find_workflow_armature(context, collection)
+        posed = 0
+        if self.apply_pose_as_rest and armature:
+            posed = _apply_pose_as_rest(context, armature)
+
+        meshes = 0
+        if self.apply_mesh_transforms:
+            meshes = _apply_mesh_object_transforms(context, collection)
+
+        lines, warnings = _readiness_report(context, collection)
+        _write_readiness_text(lines, warnings)
+        self.report(
+            {'INFO'},
+            f"Prep done: selected {selected}, linked {linked}, baked {posed} pose bone(s), applied {meshes} mesh transform(s), warnings {len(warnings)}"
+        )
+        return {'FINISHED'}
+
+
+class DSTS_OT_CheckExportReadiness(Operator):
+    """Write a readiness report for the current Geom collection"""
+    bl_idname = "object.dsts_check_export_readiness"
+    bl_label = "Check Export Readiness"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        collection = _active_geom_collection(context)
+        lines, warnings = _readiness_report(context, collection)
+        _write_readiness_text(lines, warnings)
+        if warnings:
+            for warning in warnings[:8]:
+                print(f"[DSTS] Readiness warning: {warning}")
+            self.report({'WARNING'}, f"Readiness report has {len(warnings)} warning(s)")
+        else:
+            self.report({'INFO'}, "Readiness report looks clean")
+        return {'FINISHED'}
+
+
+class DSTS_OT_LoadFrameReference(Operator):
+    """Load a tutorial frame as a viewport image reference"""
+    bl_idname = "object.dsts_load_frame_reference"
+    bl_label = "Load Frame Reference"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    offset: IntProperty(default=0)
+
+    def execute(self, context):
+        try:
+            path, index, total = _load_frame_reference(context, self.offset)
+        except Exception as exc:
+            print(f"[DSTS] Load frame reference failed: {exc}")
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Loaded frame {index}/{total}: {os.path.basename(path)}")
+        return {'FINISHED'}
+
+
+class DSTS_OT_ClearFrameReference(Operator):
+    """Remove the DSTS viewport frame reference"""
+    bl_idname = "object.dsts_clear_frame_reference"
+    bl_label = "Clear Frame Reference"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(_FRAME_REFERENCE_NAME)
+        if obj is None:
+            self.report({'INFO'}, "No DSTS frame reference in the scene")
+            return {'FINISHED'}
+        bpy.data.objects.remove(obj, do_unlink=True)
+        self.report({'INFO'}, "Removed DSTS frame reference")
+        return {'FINISHED'}
+
+
+class DSTS_PT_WorkflowPanel(Panel):
+    """DSTS workflow tools in the 3D View sidebar"""
+    bl_idname = "DSTS_PT_workflow"
+    bl_label = "Time Stranger"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "DSTS"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        box = layout.box()
+        box.label(text="Export Fixes")
+        row = box.row(align=True)
+        row.operator(DSTS_OT_ApplyPoseAsRest.bl_idname, text="Pose As Rest")
+        row.operator(DSTS_OT_ClearExportPose.bl_idname, text="Clear Pose")
+        box.operator(DSTS_OT_ApplyMeshObjectTransforms.bl_idname, text="Apply Mesh Transforms")
+        box.operator(DSTS_OT_CheckExportReadiness.bl_idname, text="Check Export Setup")
+
+        box = layout.box()
+        box.label(text="Workflow")
+        box.operator(DSTS_OT_PrepareSelectedAsGeom.bl_idname, text="Selected To Geom")
+        box.operator(DSTS_OT_RunBasicModelPrep.bl_idname, text="Run Basic Prep")
+
+        box = layout.box()
+        box.label(text="Video Frames")
+        box.prop(scene, "dsts_frame_folder", text="Folder")
+        row = box.row(align=True)
+        row.prop(scene, "dsts_frame_index", text="Frame")
+        row.operator(DSTS_OT_LoadFrameReference.bl_idname, text="<").offset = -1
+        row.operator(DSTS_OT_LoadFrameReference.bl_idname, text="Load").offset = 0
+        row.operator(DSTS_OT_LoadFrameReference.bl_idname, text=">").offset = 1
+        box.prop(scene, "dsts_frame_reference_size", text="Size")
+        box.prop(scene, "dsts_frame_reference_alpha", text="Alpha")
+        box.operator(DSTS_OT_ClearFrameReference.bl_idname, text="Clear Reference")
+
+
+# =============================================================================
 # ERROR WINDOW OPERATOR
 # =============================================================================
 
@@ -677,6 +1183,15 @@ CLASSES = (
     DSTS_OT_AnimExport,
     DSTS_OT_AnimExportAll,
     DSTS_OT_ExportAll,
+    DSTS_OT_PrepareSelectedAsGeom,
+    DSTS_OT_ApplyPoseAsRest,
+    DSTS_OT_ClearExportPose,
+    DSTS_OT_ApplyMeshObjectTransforms,
+    DSTS_OT_RunBasicModelPrep,
+    DSTS_OT_CheckExportReadiness,
+    DSTS_OT_LoadFrameReference,
+    DSTS_OT_ClearFrameReference,
+    DSTS_PT_WorkflowPanel,
     DSTS_OT_ShowErrors,
     DSTS_MT_ImportSubmenu,
     DSTS_MT_ExportSubmenu,
@@ -686,6 +1201,32 @@ CLASSES = (
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    bpy.types.Scene.dsts_frame_folder = StringProperty(
+        name="DSTS Frame Folder",
+        description="Folder containing extracted tutorial/reference frames",
+        subtype='DIR_PATH',
+        default=_DEFAULT_FRAME_FOLDER,
+    )
+    bpy.types.Scene.dsts_frame_index = IntProperty(
+        name="DSTS Frame",
+        description="One-based frame index to load as a viewport reference",
+        default=1,
+        min=1,
+    )
+    bpy.types.Scene.dsts_frame_reference_size = FloatProperty(
+        name="DSTS Frame Size",
+        description="Viewport reference image display size",
+        default=5.0,
+        min=0.1,
+        soft_max=20.0,
+    )
+    bpy.types.Scene.dsts_frame_reference_alpha = FloatProperty(
+        name="DSTS Frame Alpha",
+        description="Viewport reference image opacity",
+        default=0.65,
+        min=0.0,
+        max=1.0,
+    )
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     from .data import material_nodes
@@ -695,6 +1236,14 @@ def register():
 def unregister():
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
+    for attr in (
+        "dsts_frame_folder",
+        "dsts_frame_index",
+        "dsts_frame_reference_size",
+        "dsts_frame_reference_alpha",
+    ):
+        if hasattr(bpy.types.Scene, attr):
+            delattr(bpy.types.Scene, attr)
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     from .data import material_nodes
