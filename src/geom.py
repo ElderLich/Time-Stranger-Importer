@@ -3,12 +3,94 @@ import os
 import re
 import base64
 import glob
+import math
 from .. import data
 from pathlib import Path
+from mathutils import Matrix
 from .backend import load_format_modules
 from .blender_compat import create_action_fcurve, create_nla_track
 from .anim.InterfaceHundredLine import AnimFileHundredLine
 from .anim.BinaryHundredLine import AnimFileBinary as AnimFileBinaryHundredLine
+
+
+_IDENTITY_4X4 = Matrix.Identity(4)
+
+
+def _matrix_is_identity(matrix, epsilon=1e-5):
+    for row in range(4):
+        for col in range(4):
+            if abs(matrix[row][col] - _IDENTITY_4X4[row][col]) > epsilon:
+                return False
+    return True
+
+
+def _format_vec(values):
+    return ", ".join(f"{float(value):.6g}" for value in values)
+
+
+def _object_transform_summary(obj):
+    loc, rot, scale = obj.matrix_basis.decompose()
+    rot_deg = [math.degrees(value) for value in rot.to_euler()]
+    return (
+        f"{obj.name} ({obj.type}) loc=({_format_vec(loc)}) "
+        f"rot=({_format_vec(rot_deg)}) scale=({_format_vec(scale)})"
+    )
+
+
+def _pose_bone_summary(pose_bone):
+    loc, rot, scale = pose_bone.matrix_basis.decompose()
+    rot_deg = [math.degrees(value) for value in rot.to_euler()]
+    return (
+        f"{pose_bone.name} loc=({_format_vec(loc)}) "
+        f"rot=({_format_vec(rot_deg)}) scale=({_format_vec(scale)})"
+    )
+
+
+def _ensure_export_transforms_are_baked(collection):
+    transformed_objects = [
+        obj for obj in collection.objects
+        if obj.type in {"ARMATURE", "MESH"} and not _matrix_is_identity(obj.matrix_basis)
+    ]
+    if transformed_objects:
+        details = "\n".join(f"- {_object_transform_summary(obj)}" for obj in transformed_objects[:8])
+        if len(transformed_objects) > 8:
+            details += f"\n- ... and {len(transformed_objects) - 8} more object(s)"
+        raise RuntimeError(
+            "Export cancelled: mesh/armature object transforms are not applied. "
+            "Blender can display the model correctly while the .geom exporter writes "
+            "unrotated local mesh and rest-pose armature data.\n\n"
+            f"{details}\n\n"
+            "Apply or bake the object transforms before export. For ordinary meshes, "
+            "use Object Mode > Ctrl+A > Rotation & Scale. For animated armatures, use "
+            "Smart Apply Scale before applying transforms and then check animation playback. "
+            "Do not edit src/utils.py for this; flop/unflop already handle the DSTS axis conversion."
+        )
+
+    posed_bones = []
+    for obj in collection.objects:
+        if obj.type != "ARMATURE" or not obj.pose:
+            continue
+        for pose_bone in obj.pose.bones:
+            if not _matrix_is_identity(pose_bone.matrix_basis):
+                posed_bones.append((obj, pose_bone))
+
+    if posed_bones:
+        details = "\n".join(
+            f"- {armature.name}: {_pose_bone_summary(pose_bone)}"
+            for armature, pose_bone in posed_bones[:12]
+        )
+        if len(posed_bones) > 12:
+            details += f"\n- ... and {len(posed_bones) - 12} more posed bone(s)"
+        raise RuntimeError(
+            "Export cancelled: the export armature has pose-mode transforms. "
+            "The .geom exporter writes the armature rest pose and local mesh data, "
+            "so a model that only looks correct because of a current pose will export in the wrong orientation.\n\n"
+            f"{details}\n\n"
+            "To export the visible pose, select the armature, enter Pose Mode, and use "
+            "Pose > Apply > Apply Pose as Rest Pose, then verify the mesh and animations. "
+            "To export the original rest pose instead, clear the pose with Alt+G, Alt+R, and Alt+S. "
+            "Ctrl+A and Smart Apply Scale only fix object transforms; they do not bake pose bones."
+        )
 
 
 def _texture_search_dirs(geom_path, images_folder=None):
@@ -196,6 +278,8 @@ def export_geom(collection):
             f"Collection is missing DSTS import metadata: {', '.join(missing_keys)}. "
             "Only natively imported .geom collections can be exported."
         )
+
+    _ensure_export_transforms_are_baked(collection)
 
     geom = dsts_formats.Geom()
     geom.unknown_0x10 = collection["unknown_0x10"]

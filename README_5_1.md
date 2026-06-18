@@ -29,7 +29,7 @@ addons, because they register overlapping import/export menus and modules.
 
 ## Current Scope
 
-Addon version: `1.2.18`
+Addon version: `1.2.19`
 
 Kept:
 
@@ -52,6 +52,9 @@ Kept:
   groups continue to bind to the imported armature.
 - Armature import sets pose bones to avoid Blender local-location behavior that
   can make imported DSTS animations look wrong.
+- Export refuses unapplied mesh/armature object transforms and non-rest
+  pose-mode bones, because those make Blender display a pose that `.geom`
+  export cannot currently bake.
 
 Removed from the active addon:
 
@@ -112,3 +115,9 @@ File > Export > Digimon Time Stranger (.geom, .anim) > All Animations (.anim)
   the exported files.
 - If material preview looks wrong in Blender, check that the nearby `images`
   folder or shared `app_0` images are available.
+- If Blender looks correct but the game model exports sideways or folded, check
+  the export armature first. Object transforms should be applied, and pose bones
+  should be clear unless you intentionally used Pose > Apply > Apply Pose as
+  Rest Pose.
+- `src/utils.py` already handles the DSTS axis conversion with `flop` and
+  `unflop`; do not change those functions to fix a scene pose problem.

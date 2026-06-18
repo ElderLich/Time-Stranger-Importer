@@ -14,7 +14,7 @@ from .src.blender_compat import create_action_fcurve, create_nla_track, iter_act
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 2, 18),
+    "version": (1, 2, 19),
     "blender": (4, 5, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
