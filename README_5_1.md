@@ -29,7 +29,7 @@ addons, because they register overlapping import/export menus and modules.
 
 ## Current Scope
 
-Addon version: `1.2.20`
+Addon version: `1.2.21`
 
 Kept:
 
@@ -57,9 +57,9 @@ Kept:
   export cannot currently bake.
 - A `DSTS` tab in the 3D View sidebar (`N`) provides safe workflow buttons for
   applying the visible pose as rest pose, clearing pose transforms, applying
-  mesh object transforms, checking export readiness, linking selected objects
-  into the Geom collection, and loading extracted video frames as viewport
-  references.
+  mesh object transforms, renaming primary UV maps to `uv1`, checking export
+  readiness, linking selected objects into the Geom collection, writing tutorial
+  workflow notes, and loading extracted tutorial frames as viewport references.
 
 Removed from the active addon:
 
@@ -133,7 +133,11 @@ Sidebar:
 - The sidebar `Pose As Rest` button performs the same pose bake that fixed the
   Zeak/Youkomon test export. Use `Clear Pose` if the current pose should not be
   exported.
-- The sidebar frame reference loader defaults to:
+- The extracted `New Digimon.mp4` tutorial frames were used to identify this
+  manual workflow: import a Nymic/DSTS-style `.geom`, preserve donor material
+  context, retarget texture nodes, rename the UV map to `uv1`, import a
+  Romsstar-style rig/source for base animation context, then export and test.
+- The sidebar tutorial-frame reference loader defaults to:
 
 ```text
 D:\Digimon Modding\Models Workshop\Video Tutorials\Extracted Frames

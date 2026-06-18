@@ -15,7 +15,7 @@ from .src.blender_compat import create_action_fcurve, create_nla_track, iter_act
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 2, 20),
+    "version": (1, 2, 21),
     "blender": (4, 5, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -269,6 +269,55 @@ def _write_readiness_text(lines, warnings):
             text.write(f"- {warning}\n")
     else:
         text.write("- None\n")
+    return text
+
+
+def _rename_primary_uvs_to_uv1(collection):
+    renamed = 0
+    skipped = 0
+    if not collection:
+        return renamed, skipped
+
+    for obj in collection.objects:
+        if obj.type != "MESH":
+            continue
+        uv_layers = obj.data.uv_layers
+        if not uv_layers:
+            skipped += 1
+            continue
+        if uv_layers[0].name != "uv1":
+            uv_layers[0].name = "uv1"
+            renamed += 1
+    return renamed, skipped
+
+
+def _write_tutorial_workflow_notes():
+    text = bpy.data.texts.get("DSTS Tutorial Workflow Notes") or bpy.data.texts.new("DSTS Tutorial Workflow Notes")
+    text.clear()
+    text.write(
+        "DSTS Tutorial Workflow Notes\n\n"
+        "Source reviewed: extracted frames from New Digimon.mp4\n"
+        "Folder: D:\\Digimon Modding\\Models Workshop\\Video Tutorials\\Extracted Frames\n\n"
+        "Observed workflow:\n"
+        "1. Start from a game .geom imported with the Nymic Razor / DSTS-style tool lineage.\n"
+        "2. Keep donor material/shader context from an existing Time Stranger Digimon.\n"
+        "3. Edit/retarget material texture nodes instead of inventing shader state from scratch.\n"
+        "4. Rename the model's primary UV map to uv1 before export.\n"
+        "5. Import a Romsstar-style rig/source to get base animation context.\n"
+        "6. Prepare or export DSTS-named animation tracks from that animation source.\n"
+        "7. Export .geom/.nlst/textures/animations, then validate in game.\n\n"
+        "What this clean addon automates safely:\n"
+        "- Pose As Rest for visible pose export.\n"
+        "- Clear Pose when the current pose should not be exported.\n"
+        "- Apply mesh object transforms.\n"
+        "- Rename primary UV maps to uv1.\n"
+        "- Check export readiness.\n"
+        "- Load tutorial frames as viewport references while following the workflow.\n\n"
+        "Still manual or external:\n"
+        "- Borrowing/retargeting material data from a donor .geom.\n"
+        "- Choosing/importing the Romsstar/base animation rig.\n"
+        "- Deciding which donor animation set should be copied into the Reloaded II patch.\n"
+    )
     return text
 
 
@@ -946,6 +995,26 @@ class DSTS_OT_ApplyMeshObjectTransforms(Operator):
         return {'FINISHED'}
 
 
+class DSTS_OT_RenamePrimaryUvsToUv1(Operator):
+    """Rename primary UV maps on Geom meshes to uv1"""
+    bl_idname = "object.dsts_rename_primary_uvs_to_uv1"
+    bl_label = "Rename Primary UVs To uv1"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        collection = _active_geom_collection(context)
+        if collection is None:
+            self.report({'ERROR'}, "No Geom collection found")
+            return {'CANCELLED'}
+
+        renamed, skipped = _rename_primary_uvs_to_uv1(collection)
+        if renamed == 0:
+            self.report({'INFO'}, f"Primary UV maps already named uv1; skipped {skipped} mesh(es) without UVs")
+        else:
+            self.report({'INFO'}, f"Renamed {renamed} primary UV map(s) to uv1; skipped {skipped} mesh(es) without UVs")
+        return {'FINISHED'}
+
+
 class DSTS_OT_RunBasicModelPrep(Operator):
     """Run the noob-safe prep sequence for the current Geom collection"""
     bl_idname = "object.dsts_run_basic_model_prep"
@@ -1001,11 +1070,13 @@ class DSTS_OT_RunBasicModelPrep(Operator):
         if self.apply_mesh_transforms:
             meshes = _apply_mesh_object_transforms(context, collection)
 
+        renamed_uvs, _skipped_uvs = _rename_primary_uvs_to_uv1(collection)
+
         lines, warnings = _readiness_report(context, collection)
         _write_readiness_text(lines, warnings)
         self.report(
             {'INFO'},
-            f"Prep done: selected {selected}, linked {linked}, baked {posed} pose bone(s), applied {meshes} mesh transform(s), warnings {len(warnings)}"
+            f"Prep done: selected {selected}, linked {linked}, baked {posed} pose bone(s), applied {meshes} mesh transform(s), renamed {renamed_uvs} UV(s), warnings {len(warnings)}"
         )
         return {'FINISHED'}
 
@@ -1026,6 +1097,18 @@ class DSTS_OT_CheckExportReadiness(Operator):
             self.report({'WARNING'}, f"Readiness report has {len(warnings)} warning(s)")
         else:
             self.report({'INFO'}, "Readiness report looks clean")
+        return {'FINISHED'}
+
+
+class DSTS_OT_WriteTutorialWorkflowNotes(Operator):
+    """Write the analyzed tutorial workflow into a Blender text block"""
+    bl_idname = "object.dsts_write_tutorial_workflow_notes"
+    bl_label = "Write Tutorial Workflow Notes"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        _write_tutorial_workflow_notes()
+        self.report({'INFO'}, "Wrote DSTS Tutorial Workflow Notes text block")
         return {'FINISHED'}
 
 
@@ -1087,10 +1170,12 @@ class DSTS_PT_WorkflowPanel(Panel):
         box = layout.box()
         box.label(text="Workflow")
         box.operator(DSTS_OT_PrepareSelectedAsGeom.bl_idname, text="Selected To Geom")
+        box.operator(DSTS_OT_RenamePrimaryUvsToUv1.bl_idname, text="Rename UVs To uv1")
         box.operator(DSTS_OT_RunBasicModelPrep.bl_idname, text="Run Basic Prep")
+        box.operator(DSTS_OT_WriteTutorialWorkflowNotes.bl_idname, text="Tutorial Notes")
 
         box = layout.box()
-        box.label(text="Video Frames")
+        box.label(text="Tutorial Frames")
         box.prop(scene, "dsts_frame_folder", text="Folder")
         row = box.row(align=True)
         row.prop(scene, "dsts_frame_index", text="Frame")
@@ -1187,8 +1272,10 @@ CLASSES = (
     DSTS_OT_ApplyPoseAsRest,
     DSTS_OT_ClearExportPose,
     DSTS_OT_ApplyMeshObjectTransforms,
+    DSTS_OT_RenamePrimaryUvsToUv1,
     DSTS_OT_RunBasicModelPrep,
     DSTS_OT_CheckExportReadiness,
+    DSTS_OT_WriteTutorialWorkflowNotes,
     DSTS_OT_LoadFrameReference,
     DSTS_OT_ClearFrameReference,
     DSTS_PT_WorkflowPanel,
