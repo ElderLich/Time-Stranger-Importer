@@ -29,7 +29,7 @@ addons, because they register overlapping import/export menus and modules.
 
 ## Current Scope
 
-Addon version: `1.2.21`
+Addon version: `1.2.24`
 
 Kept:
 
@@ -57,9 +57,17 @@ Kept:
   export cannot currently bake.
 - A `DSTS` tab in the 3D View sidebar (`N`) provides safe workflow buttons for
   applying the visible pose as rest pose, clearing pose transforms, applying
-  mesh object transforms, renaming primary UV maps to `uv1`, checking export
-  readiness, linking selected objects into the Geom collection, writing tutorial
-  workflow notes, and loading extracted tutorial frames as viewport references.
+  armature/mesh object transforms, cleaning action object-transform curves,
+  renaming primary UV maps to `uv1`, borrowing donor `.geom` material metadata,
+  retargeting material textures, preparing the locked vanilla base NLA strip,
+  checking export readiness, linking selected objects into the Geom collection,
+  and writing tutorial workflow notes.
+- The material retarget workflow now prefers an active/model collection name
+  such as `chr110` over stale stored `chr050` values, and reports missing target
+  texture stems in Blender when some borrowed material families are unavailable.
+  If an exact old-family rename such as `chr027a02 -> chr110a02` is missing, it
+  falls back to the standard target slot for that uniform, such as `chr110a01`
+  for diffuse color.
 
 Removed from the active addon:
 
@@ -67,9 +75,11 @@ Removed from the active addon:
 - `src/dsts_py` and `py_geom_*` modules.
 - Template-backed custom `.geom` export for arbitrary Blender models.
 - One-button custom Digimon export automation.
-- Legacy material borrowing/retargeting, model scale fitting, target material
-  generation, root locks, LOD fallback copying, neutral base animation
-  synthesis, and New Century action automation.
+- Model scale fitting, target material generation, root locks, LOD fallback
+  copying, neutral base animation synthesis, and broad New Century action
+  automation.
+- Preset-driven action generation that guessed every battle/field animation
+  from names such as `attack_move`, `stand`, or `idle`.
 
 Custom model packaging should currently be handled outside this clean addon
 with dedicated helper tools and known-good patch references.
@@ -137,11 +147,11 @@ Sidebar:
   manual workflow: import a Nymic/DSTS-style `.geom`, preserve donor material
   context, retarget texture nodes, rename the UV map to `uv1`, import a
   Romsstar-style rig/source for base animation context, then export and test.
-- The sidebar tutorial-frame reference loader defaults to:
-
-```text
-D:\Digimon Modding\Models Workshop\Video Tutorials\Extracted Frames
-```
+- Use `Setup Base NLA` after importing the vanilla/Romsstar source. It pushes
+  down `target_chr_base` as a short Hold/Replace strip, locks it, clears the
+  active action back to `No Action`, and leaves the real animation pushdown and
+  export selection manual. Export the target animation track, not the locked
+  base track.
 
 - `src/utils.py` already handles the DSTS axis conversion with `flop` and
   `unflop`; do not change those functions to fix a scene pose problem.

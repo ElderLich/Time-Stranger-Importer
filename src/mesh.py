@@ -433,9 +433,36 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
         mesh_out.set_weight(vert_weights.astype(np.float16))
 
     # -- ATTRIBUTES --
+    if not mesh.materials or mesh.materials[0] is None:
+        raise ValueError(
+            f"Mesh '{mesh.name}' has no material assigned. "
+            "Use Borrow Material Setup to give it a donor material before exporting."
+        )
     mat = mesh.materials[0]
-    g_node = next(n for n in mat.node_tree.nodes if n.type == "GROUP" and n.node_tree.name == f"DSTS_Data-{mat.name}")
-    data_node = next(n for n in g_node.node_tree.nodes if type(n) == data.material_nodes.ShaderDataNode)
+    if not mat.node_tree:
+        raise ValueError(
+            f"Material '{mat.name}' has no node tree. "
+            "Use Borrow Material Setup before exporting."
+        )
+    g_node = next(
+        (n for n in mat.node_tree.nodes
+         if n.type == "GROUP" and n.node_tree and n.node_tree.name == f"DSTS_Data-{mat.name}"),
+        None,
+    )
+    if g_node is None:
+        raise ValueError(
+            f"Material '{mat.name}' has no DSTS_Data node group. "
+            "Use Borrow Material Setup before exporting."
+        )
+    data_node = next(
+        (n for n in g_node.node_tree.nodes if type(n) == data.material_nodes.ShaderDataNode),
+        None,
+    )
+    if data_node is None or data_node.bytes_per_vertex <= 0 or len(data_node.attributes) == 0:
+        raise ValueError(
+            f"Material '{mat.name}' has no DSTS vertex buffer layout. "
+            "Use Borrow Material Setup again before exporting."
+        )
     attrs = []
     for at in data_node.attributes:
         attribute = dsts_formats.MeshAttribute()

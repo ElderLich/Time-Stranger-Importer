@@ -339,7 +339,7 @@ def export_textures(collection, output_dir, as_png=False):
                                     output_path = os.path.join(images_dir, tex_name + ".png")
                                     export_image_as_png(img, output_path)
                                 else:
-                                    output_path = os.path.join(images_dir, tex_name + ".img")
+                                    output_path = os.path.join(images_dir, tex_name + ".dds")
                                     export_image_as_dds(img, output_path)
                                 exported.append(tex_name)
                             except Exception as e:
