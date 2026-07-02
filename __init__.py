@@ -871,48 +871,6 @@ def _rename_primary_uvs_to_uv1(collection):
     return renamed, skipped
 
 
-def _write_tutorial_workflow_notes():
-    text = bpy.data.texts.get("DSTS Tutorial Workflow Notes") or bpy.data.texts.new("DSTS Tutorial Workflow Notes")
-    text.clear()
-    text.write(
-        "DSTS Tutorial Workflow Notes\n\n"
-        "Source reviewed: extracted frames from New Digimon.mp4\n"
-        "Folder: D:\\Digimon Modding\\Models Workshop\\Video Tutorials\\Extracted Frames\n\n"
-        "Observed workflow:\n"
-        "1. Start from a game .geom imported with the Nymic Razor / DSTS-style tool lineage.\n"
-        "2. Keep donor material/shader context from an existing Time Stranger Digimon.\n"
-        "3. Edit/retarget material texture nodes instead of inventing shader state from scratch.\n"
-        "4. Rename the model's primary UV map to uv1 before export.\n"
-        "5. Import a Romsstar-style rig/source to get base animation context.\n"
-        "6. Push down the vanilla base action as the locked reference NLA strip.\n"
-        "7. Push down each target animation manually, then export the target animation track, not base.\n"
-        "8. Export .geom/.nlst/textures/animations, then validate in game.\n\n"
-        "What this clean addon automates safely:\n"
-        "- Pose As Rest for visible pose export.\n"
-        "- Clear Pose when the current pose should not be exported.\n"
-        "- Apply armature and mesh object transforms.\n"
-        "- Clean armature object transform curves from pose actions.\n"
-        "- Rename primary UV maps to uv1.\n"
-        "- Borrow donor .geom material metadata and retarget texture nodes.\n"
-        "- Build the vanilla base NLA strip and clear the active action.\n"
-        "- Check export readiness.\n"
-        "- Write these tutorial workflow notes into a Blender text block.\n\n"
-        "Animation workflow observed in Zeak's blend and tutorial frames:\n"
-        "1. Import the target DSTS/Nymic .geom and set up materials/textures.\n"
-        "2. Rename the primary UV map to uv1.\n"
-        "3. Import a Romsstar-style rig/source so its actions are available.\n"
-        "4. Keep the target base action, for example chr050_base.\n"
-        "5. Push down chr050_base as a short 1 to 2 strip with Hold/Replace, lock it, then clear the active action.\n"
-        "6. Manually browse/select the target animation action and push it down.\n"
-        "7. Export the target animation track, never the locked base track.\n\n"
-        "Still manual or external:\n"
-        "- Choosing/importing the Romsstar/base animation rig.\n"
-        "- Pushing down each target animation action after the base is prepared.\n"
-        "- Deciding which donor animation set should be copied into the Reloaded II patch.\n"
-    )
-    return text
-
-
 def build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=30.0):
     from .src.anim import AnimFileHundredLine
 
@@ -2295,128 +2253,6 @@ class DSTS_OT_SetupBaseAnimationNla(Operator):
         return {'FINISHED'}
 
 
-class DSTS_OT_RunBasicModelPrep(Operator):
-    """Run the noob-safe prep sequence for the current Geom collection"""
-    bl_idname = "object.dsts_run_basic_model_prep"
-    bl_label = "Run Basic Model Prep"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    link_selected: BoolProperty(
-        name="Link Selected",
-        description="Link selected mesh/armature objects into the Geom collection first",
-        default=True,
-    )
-
-    apply_pose_as_rest: BoolProperty(
-        name="Apply Pose As Rest",
-        description="Bake the visible armature pose into the rest pose before export",
-        default=True,
-    )
-
-    apply_armature_transforms: BoolProperty(
-        name="Apply Armature Transform",
-        description="Apply armature object location, rotation, and scale before export",
-        default=True,
-    )
-
-    apply_mesh_transforms: BoolProperty(
-        name="Apply Mesh Transforms",
-        description="Apply mesh object location, rotation, and scale",
-        default=True,
-    )
-
-    clean_action_object_transforms: BoolProperty(
-        name="Clean Action Object Transforms",
-        description="Reset armature object rotation/scale curves on pose actions after baking export transforms",
-        default=True,
-    )
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=420)
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        layout.prop(self, "link_selected")
-        layout.prop(self, "apply_pose_as_rest")
-        layout.prop(self, "apply_armature_transforms")
-        layout.prop(self, "apply_mesh_transforms")
-        layout.prop(self, "clean_action_object_transforms")
-
-    def execute(self, context):
-        collection = _active_geom_collection(context)
-        if collection is None:
-            collection = bpy.data.collections.new("Geom")
-            context.scene.collection.children.link(collection)
-
-        linked = 0
-        selected = 0
-        if self.link_selected:
-            selected, linked = _link_selected_to_collection(context, collection)
-
-        armature = _find_workflow_armature(context, collection)
-        cleaned_actions = 0
-        if self.clean_action_object_transforms and armature:
-            for action in bpy.data.actions:
-                if _clean_action_object_transforms(armature, action, include_rotation=True, include_scale=True):
-                    cleaned_actions += 1
-            context.view_layer.update()
-
-        posed = 0
-        if self.apply_pose_as_rest and armature:
-            posed = _apply_pose_as_rest(context, armature)
-
-        armatures = 0
-        if self.apply_armature_transforms:
-            armatures = _apply_armature_object_transforms(context, collection)
-
-        meshes = 0
-        if self.apply_mesh_transforms:
-            meshes = _apply_mesh_object_transforms(context, collection)
-
-        renamed_uvs, _skipped_uvs = _rename_primary_uvs_to_uv1(collection)
-
-        lines, warnings = _readiness_report(context, collection)
-        _write_readiness_text(lines, warnings)
-        self.report(
-            {'INFO'},
-            f"Prep done: selected {selected}, linked {linked}, baked {posed} pose bone(s), applied {armatures} armature transform(s), {meshes} mesh transform(s), cleaned {cleaned_actions} action(s), renamed {renamed_uvs} UV(s), warnings {len(warnings)}"
-        )
-        return {'FINISHED'}
-
-
-class DSTS_OT_CheckExportReadiness(Operator):
-    """Write a readiness report for the current Geom collection"""
-    bl_idname = "object.dsts_check_export_readiness"
-    bl_label = "Check Export Readiness"
-    bl_options = {'REGISTER'}
-
-    def execute(self, context):
-        collection = _active_geom_collection(context)
-        lines, warnings = _readiness_report(context, collection)
-        _write_readiness_text(lines, warnings)
-        if warnings:
-            for warning in warnings[:8]:
-                print(f"[DSTS] Readiness warning: {warning}")
-            self.report({'WARNING'}, f"Readiness report has {len(warnings)} warning(s)")
-        else:
-            self.report({'INFO'}, "Readiness report looks clean")
-        return {'FINISHED'}
-
-
-class DSTS_OT_WriteTutorialWorkflowNotes(Operator):
-    """Write the analyzed tutorial workflow into a Blender text block"""
-    bl_idname = "object.dsts_write_tutorial_workflow_notes"
-    bl_label = "Write Tutorial Workflow Notes"
-    bl_options = {'REGISTER'}
-
-    def execute(self, context):
-        _write_tutorial_workflow_notes()
-        self.report({'INFO'}, "Wrote DSTS Tutorial Workflow Notes text block")
-        return {'FINISHED'}
-
-
 class DSTS_PT_WorkflowPanel(Panel):
     """DSTS workflow tools in the 3D View sidebar"""
     bl_idname = "DSTS_PT_workflow"
@@ -2435,7 +2271,7 @@ class DSTS_PT_WorkflowPanel(Panel):
             scene.dsts_workflow_target_chr = target_chr
 
         box = layout.box()
-        box.label(text="Old Workflow")
+        box.label(text="Workflow")
         box.operator(DSTS_OT_PrepareSelectedAsGeom.bl_idname, text="Prepare Selected As Geom")
         box.prop(scene, "dsts_extracted_root", text="Extracted Root")
         box.prop(scene, "dsts_workflow_donor_chr", text="Donor Chr")
@@ -2472,8 +2308,6 @@ class DSTS_PT_WorkflowPanel(Panel):
         base = box.operator(DSTS_OT_SetupBaseAnimationNla.bl_idname, text="Setup Base NLA")
         base.target_chr = target_chr
         base.replace_existing = scene.dsts_workflow_replace_actions
-        box.operator(DSTS_OT_CheckExportReadiness.bl_idname, text="Check Export Setup")
-        box.operator(DSTS_OT_WriteTutorialWorkflowNotes.bl_idname, text="Tutorial Notes")
 
         # Mesh flags for the active mesh — the TS .geom per-mesh flag byte. These
         # are populated by import or by Borrow Material Setup; shown here so the
@@ -2495,13 +2329,10 @@ class DSTS_PT_WorkflowPanel(Panel):
 
         box = layout.box()
         box.label(text="Export Prep")
-        # One-click prep chains the essential steps (link -> clean action xforms ->
-        # pose as rest -> apply armature xforms [clears parent] -> apply mesh xforms
-        # -> rename UVs -> readiness). Manual "Apply Armature Transform" is exposed
-        # for the common single fix (it now CLEARS the identity-world parent instead
-        # of baking the -90 into the bones). The other pose/action/mesh operators are
-        # still registered and reachable via F3 search, just kept off the panel.
-        box.operator(DSTS_OT_RunBasicModelPrep.bl_idname, text="Run Basic Prep")
+        # Manual "Apply Armature Transform" is exposed for the common single fix
+        # (it CLEARS the identity-world parent instead of baking the -90 into the
+        # bones). Run Basic Prep, along with the other pose/action/mesh operators,
+        # is still registered and reachable via F3 search, just kept off the panel.
         box.operator(DSTS_OT_ApplyArmatureObjectTransforms.bl_idname, text="Apply Armature Transform")
 
 
@@ -2560,11 +2391,6 @@ class DSTS_MT_ExportSubmenu(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(DSTS_OT_PrepareSelectedAsGeom.bl_idname, text="Prepare Selected As Geom")
-        layout.operator(DSTS_OT_BorrowMaterialSetup.bl_idname, text="Borrow Material Setup")
-        layout.operator(DSTS_OT_RetargetMaterialTextures.bl_idname, text="Retarget Material Textures")
-        layout.operator(DSTS_OT_CheckExportReadiness.bl_idname, text="Check Export Setup")
-        layout.separator()
         layout.operator(DSTS_OT_ExportAll.bl_idname, text="Export All (.geom + .anim)")
         layout.separator()
         layout.operator(DSTS_OT_GeomExport.bl_idname, text="Geometry Only (.geom)")
@@ -2602,9 +2428,6 @@ CLASSES = (
     DSTS_OT_RetargetMaterialTextures,
     DSTS_OT_ImportDonorAnimations,
     DSTS_OT_SetupBaseAnimationNla,
-    DSTS_OT_RunBasicModelPrep,
-    DSTS_OT_CheckExportReadiness,
-    DSTS_OT_WriteTutorialWorkflowNotes,
     DSTS_PT_WorkflowPanel,
     DSTS_OT_ShowErrors,
     DSTS_MT_ImportSubmenu,

@@ -303,6 +303,11 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
         mesh_out.set_normal(vert_normals.astype(np.float16))
 
     # -- UVS --
+    # Track which uv channels the mesh actually carries and keep uv1's coords so
+    # any declared-but-missing overlay channel (uv2/uv3) can be filled from uv1
+    # after the material's DSTS_Data vertex layout is known (see AUTO-UV below).
+    present_uv_channels = set()
+    uv1_coords = None
     for layer in mesh.uv_layers:
         for n in range(1,4):
             if f"uv{n}" == layer.name:
@@ -315,6 +320,9 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
                 vert_uvs[loop_index[v_index]] = loop_uvs[v_index]
 
                 mesh_out.set_uv(n, vert_uvs)
+                present_uv_channels.add(n)
+                if n == 1:
+                    uv1_coords = vert_uvs
 
     # -- COLORS --
     if "Color" in mesh.color_attributes:
@@ -474,7 +482,28 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
 
     mesh_out.mesh_attributes = attrs
     mesh_out.bytes_per_vertex = data_node.bytes_per_vertex
-    
+
+    # -- AUTO-UV: fill declared-but-missing uv channels from uv1 --
+    # Overlay materials (e.g. chr050_f01/f02) declare a vertex layout with
+    # uv1+uv2+uv3 (bytes_per_vertex 52), but custom claw/shield meshes often
+    # carry ONLY uv1. Any uv channel the layout declares but the mesh never set
+    # is packed as garbage in the vertex buffer, so the overlay shader samples
+    # noise and the mesh loses its texture. Copy uv1's coordinates into every
+    # declared-but-missing channel so the overlay samples a valid UV. This is
+    # idempotent: channels the mesh already provides are left untouched.
+    if uv1_coords is not None:
+        for at in data_node.attributes:
+            atype = str(at.atype)
+            if not atype.startswith("uv"):
+                continue
+            try:
+                n = int(atype[2:])
+            except ValueError:
+                continue
+            if 1 <= n <= 3 and n not in present_uv_channels:
+                mesh_out.set_uv(n, uv1_coords)
+                present_uv_channels.add(n)
+
     # -- FLAGS --
     mesh_out.flag_0 = mesh.get("DSTS_flag_0", True)
     mesh_out.flag_1 = mesh.get("DSTS_flag_1", False)
