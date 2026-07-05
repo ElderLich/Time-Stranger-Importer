@@ -936,7 +936,135 @@ def build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rat
                     anim_file.scales[bone_idx][frame_anim] = [1.0, 1.0, 1.0]
                 anim_file.scales[bone_idx][frame_anim][array_index] = value
 
+    # Root-motion fix: NC glb imports (and hand-made actions) can carry the
+    # rig's world motion on the ARMATURE OBJECT's transform channels, which the
+    # per-bone loop above silently drops. Compose it onto the root bone track.
+    _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names, action_frame_start)
+
     return anim_file
+
+
+def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names, action_frame_start):
+    """Fold object-level animation of ``action`` into the root bone's tracks.
+
+    TS .anim files know nothing about object transforms: they store per-bone
+    deltas vs the geom rest (``local = rest_local @ T@R@S``). When the armature
+    object itself is animated (e.g. glTF imports fold an un-skinned root node's
+    motion onto the object), the equivalent root-bone delta is::
+
+        delta'(f) = rest_root^-1 @ O(f) @ rest_root @ T@R@S(delta(f))
+
+    where O(f) is the object's local basis matrix (identity object rest is
+    assumed - the .geom exporter enforces it). No-op when the action has no
+    non-identity object transform curves. Returns True when composed.
+    """
+    from .src.nc_glb import (
+        OBJECT_TRANSFORM_PATHS,
+        _channel_defaults,
+        _pose_slot_and_fcurves,
+        object_basis_matrix_from_fcurves,
+    )
+
+    if not _action_has_object_transform_curves(
+        action, include_location=True, include_rotation=True, include_scale=True
+    ):
+        return False
+
+    # Only object curves living alongside the pose curves (same action slot)
+    # belong to this armature; other slots animate other objects.
+    _pose_slot, slot_fcurves = _pose_slot_and_fcurves(action)
+    if not slot_fcurves:
+        return False
+    object_fcurves = {}
+    for fc in slot_fcurves:
+        data_path = str(getattr(fc, "data_path", ""))
+        if data_path in OBJECT_TRANSFORM_PATHS:
+            object_fcurves[(data_path, int(getattr(fc, "array_index", 0)))] = fc
+    if not object_fcurves:
+        return False
+
+    root_bone = next((b for b in armature_obj.data.bones if b.parent is None), None)
+    if root_bone is None or root_bone.name not in bone_names:
+        return False
+    root_idx = bone_names.index(root_bone.name)
+    rest_root = root_bone.matrix_local.copy()
+    rest_root_inv = rest_root.inverted()
+
+    # Existing root deltas (from the per-bone loop) evaluated via the action's
+    # own pose F-Curves so interpolation matches Blender.
+    base_path = f'pose.bones["{root_bone.name}"]'
+    pose_fcurves = {}
+    for fc in slot_fcurves:
+        data_path = str(getattr(fc, "data_path", ""))
+        if data_path.startswith(base_path):
+            pose_fcurves[(data_path, int(getattr(fc, "array_index", 0)))] = fc
+
+    def _pose_value(channel, index, frame, default):
+        fc = pose_fcurves.get((f"{base_path}.{channel}", index))
+        return fc.evaluate(frame) if fc is not None else default
+
+    frames = set(anim_file.rotations[root_idx]) | set(anim_file.positions[root_idx]) | set(anim_file.scales[root_idx])
+    for fc in object_fcurves.values():
+        for keyframe in getattr(fc, "keyframe_points", []):
+            frame_anim = int(keyframe.co[0]) - action_frame_start
+            if frame_anim >= 0:
+                frames.add(frame_anim)
+    if not frames:
+        frames = {0}
+
+    obj_defaults = _channel_defaults(armature_obj)
+    rotation_mode = armature_obj.rotation_mode
+    parent_world = armature_obj.parent.matrix_world.copy() if armature_obj.parent else Matrix.Identity(4)
+    parent_inverse = armature_obj.matrix_parent_inverse.copy()
+
+    from mathutils import Quaternion, Vector
+    new_rot, new_pos, new_scl = {}, {}, {}
+    previous_quat = None
+    for frame_anim in sorted(frames):
+        frame_abs = float(frame_anim + action_frame_start)
+        object_basis = object_basis_matrix_from_fcurves(obj_defaults, rotation_mode, object_fcurves, frame_abs)
+        object_world = parent_world @ parent_inverse @ object_basis
+
+        old_loc = Vector((
+            _pose_value("location", 0, frame_abs, 0.0),
+            _pose_value("location", 1, frame_abs, 0.0),
+            _pose_value("location", 2, frame_abs, 0.0),
+        ))
+        old_quat = Quaternion((
+            _pose_value("rotation_quaternion", 0, frame_abs, 1.0),
+            _pose_value("rotation_quaternion", 1, frame_abs, 0.0),
+            _pose_value("rotation_quaternion", 2, frame_abs, 0.0),
+            _pose_value("rotation_quaternion", 3, frame_abs, 0.0),
+        ))
+        if old_quat.magnitude > 1e-8:
+            old_quat.normalize()
+        else:
+            old_quat = Quaternion((1.0, 0.0, 0.0, 0.0))
+        old_scale = Vector((
+            _pose_value("scale", 0, frame_abs, 1.0),
+            _pose_value("scale", 1, frame_abs, 1.0),
+            _pose_value("scale", 2, frame_abs, 1.0),
+        ))
+        old_delta = (
+            Matrix.Translation(old_loc)
+            @ old_quat.to_matrix().to_4x4()
+            @ Matrix.Diagonal((*old_scale, 1.0))
+        )
+
+        new_delta = rest_root_inv @ object_world @ rest_root @ old_delta
+        loc, quat, scale = new_delta.decompose()
+        if previous_quat is not None and previous_quat.dot(quat) < 0.0:
+            quat = -quat
+        previous_quat = quat
+        new_rot[frame_anim] = [quat.x, quat.y, quat.z, quat.w]
+        new_pos[frame_anim] = [loc.x, loc.y, loc.z]
+        new_scl[frame_anim] = [scale.x, scale.y, scale.z]
+
+    anim_file.rotations[root_idx] = new_rot
+    anim_file.positions[root_idx] = new_pos
+    anim_file.scales[root_idx] = new_scl
+    print(f"[DSTS] {action.name}: composed object-level motion onto root bone '{root_bone.name}' ({len(frames)} keys)")
+    return True
 
 
 # =============================================================================
@@ -1074,6 +1202,78 @@ class DSTS_OT_GeomExport(Operator, ExportHelper):
             self.filepath = ""
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
+
+
+class DSTS_OT_NcGlbImport(Operator, ImportHelper):
+    """Import a Digimon New Century model.glb as an export-ready DSTS scene"""
+    bl_idname = "import_scene.dsts_nc_glb"
+    bl_label = "Digimon New Century Model (.glb)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".glb"
+    filter_glob: StringProperty(default="*.glb", options={'HIDDEN'})
+
+    donor_chr: StringProperty(
+        name="Donor Chr",
+        description="Existing Digimon whose materials, mesh flags and geom metadata to borrow, for example chr050",
+        default="chr050",
+    )
+    donor_geom_path: StringProperty(
+        name="Donor Geom",
+        description="Optional direct donor .geom path (overrides Donor Chr lookup)",
+        subtype='FILE_PATH',
+        default="",
+    )
+    extracted_root: StringProperty(
+        name="Extracted Assets Root",
+        description="Root folder containing extracted Time Stranger assets (used to find the donor .geom)",
+        subtype='DIR_PATH',
+        default=_DEFAULT_EXTRACTED_ROOT,
+    )
+    build_outline: BoolProperty(
+        name="Build Outline Mesh",
+        description="Join a copy of the body meshes into an 'outline' mesh with the donor's MTR_line01 material and a white vertex color (required by the DSTS outline shader)",
+        default=True,
+    )
+
+    def invoke(self, context, event):
+        self.extracted_root = _scene_extracted_root(context)
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.prop(self, "donor_chr")
+        layout.prop(self, "donor_geom_path")
+        layout.prop(self, "extracted_root")
+        layout.prop(self, "build_outline")
+
+    def execute(self, context):
+        from .src.nc_glb import import_nc_model
+
+        try:
+            donor_path = _resolve_donor_geom_path(self.extracted_root, self.donor_chr, self.donor_geom_path)
+            collection, armature, notes = import_nc_model(
+                context, self.filepath, donor_path, build_outline=self.build_outline
+            )
+        except Exception as exc:
+            print(f"[DSTS] NC glb import failed: {exc}")
+            import traceback
+            traceback.print_exc()
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+        for note in notes:
+            self.report({'WARNING'}, note)
+        collection["DSTS_material_donor_chr"] = _normalize_chr_stem(self.donor_chr)[0]
+        self.report(
+            {'INFO'},
+            f"Imported NC model into '{collection.name}': {len(armature.data.bones)} bones, "
+            f"{len([o for o in collection.objects if o.type == 'MESH'])} meshes",
+        )
+        return {'FINISHED'}
 
 
 # =============================================================================
@@ -1462,6 +1662,101 @@ class DSTS_OT_AnimExportAll(Operator):
         if exported_count == 0 and failed_count == 0:
             self.report({'WARNING'}, "No animations to export")
             return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+# NC clip name -> TS animation code. Per TS slot conventions:
+# bn01 idle, bn02 secondary idle, br01 run/move, bd01 hurt, bv01 victory,
+# ba01/ba02 attacks, bs01/bs02 skills, e001 evolution.
+_NC_MOVESET_MAP = (
+    ("bn01", ("idle",)),
+    ("bn02", ("stand", "tongyong")),
+    ("br01", ("move2", "move")),
+    ("bd01", ("hurt",)),
+    ("bv01", ("win", "win2")),
+    ("ba01", ("attack_move", "attack1_move_to")),
+    ("ba02", ("attack_move_to", "attack1_move_to")),
+    ("bs01", ("skill1_move_to", "skill1_move_back")),
+    ("bs02", ("skill2_move_to", "skill2_display")),
+    ("e001", ("evolution2", "evolution")),
+)
+
+
+class DSTS_OT_ExportNcMoveset(Operator):
+    """Export the NC animation set as TS-named .anim files (idle -> bn01, move2 -> br01, ...)"""
+    bl_idname = "export_scene.dsts_nc_moveset"
+    bl_label = "Digimon Time Stranger Export NC Moveset"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    directory: StringProperty(name="Output Directory", subtype='DIR_PATH')
+    armature_name: EnumProperty(items=fetch_armatures, name="Armature")
+    target_chr: StringProperty(
+        name="Target Chr",
+        description="Target character stem used for the exported file names, for example chr110",
+        default="chr110",
+    )
+
+    def invoke(self, context, event):
+        collection = _active_geom_collection(context)
+        stem = _target_chr_from_context(context, collection, "")
+        if stem:
+            self.target_chr = stem
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.prop(self, "armature_name")
+        layout.prop(self, "target_chr")
+
+    def execute(self, context):
+        if self.armature_name == "NONE":
+            self.report({'ERROR'}, "No armature selected")
+            return {'CANCELLED'}
+        armature_obj = bpy.data.objects.get(self.armature_name)
+        if not armature_obj or armature_obj.type != "ARMATURE":
+            self.report({'ERROR'}, f"Armature '{self.armature_name}' not found")
+            return {'CANCELLED'}
+        if not armature_obj.animation_data or not armature_obj.animation_data.nla_tracks:
+            self.report({'ERROR'}, "Armature has no NLA tracks (import an NC model first)")
+            return {'CANCELLED'}
+
+        tracks = {track.name: track for track in armature_obj.animation_data.nla_tracks if track.strips}
+        target_stem, _num = _normalize_chr_stem(self.target_chr)
+
+        exported = []
+        missing = []
+        for ts_code, candidates in _NC_MOVESET_MAP:
+            track = next((tracks[name] for name in candidates if name in tracks), None)
+            if track is None:
+                missing.append(ts_code)
+                continue
+            strip = track.strips[0]
+            action = strip.action
+            if not action:
+                missing.append(ts_code)
+                continue
+            playback_rate = 24.0 / strip.scale if strip.scale > 0 else 30.0
+            anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
+            filepath = os.path.join(self.directory, f"{target_stem}_{ts_code}.anim")
+            try:
+                anim_file.to_file(filepath)
+                exported.append(f"{ts_code}<-{track.name}")
+            except Exception as exc:
+                print(f"[DSTS] Failed to export {ts_code} from {track.name}: {exc}")
+                missing.append(ts_code)
+
+        if not exported:
+            self.report({'ERROR'}, "No NC clips matched the moveset mapping")
+            return {'CANCELLED'}
+        message = f"Exported {len(exported)} moveset anim(s): {', '.join(exported)}"
+        if missing:
+            message += f"; no source clip for: {', '.join(missing)}"
+            self.report({'WARNING'}, message)
+        else:
+            self.report({'INFO'}, message)
         return {'FINISHED'}
 
 
@@ -2272,6 +2567,7 @@ class DSTS_PT_WorkflowPanel(Panel):
 
         box = layout.box()
         box.label(text="Workflow")
+        box.operator(DSTS_OT_NcGlbImport.bl_idname, text="Import NC Model (.glb)", icon='IMPORT')
         box.operator(DSTS_OT_PrepareSelectedAsGeom.bl_idname, text="Prepare Selected As Geom")
         box.prop(scene, "dsts_extracted_root", text="Extracted Root")
         box.prop(scene, "dsts_workflow_donor_chr", text="Donor Chr")
@@ -2382,6 +2678,8 @@ class DSTS_MT_ImportSubmenu(bpy.types.Menu):
         layout = self.layout
         layout.operator(DSTS_OT_GeomImport.bl_idname, text="Geometry (.geom)")
         layout.operator(DSTS_OT_AnimImport.bl_idname, text="Animation (.anim)")
+        layout.separator()
+        layout.operator(DSTS_OT_NcGlbImport.bl_idname, text="New Century Model (.glb)")
 
 
 class DSTS_MT_ExportSubmenu(bpy.types.Menu):
@@ -2396,6 +2694,7 @@ class DSTS_MT_ExportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_GeomExport.bl_idname, text="Geometry Only (.geom)")
         layout.operator(DSTS_OT_AnimExport.bl_idname, text="Animation (.anim)")
         layout.operator(DSTS_OT_AnimExportAll.bl_idname, text="All Animations (.anim)")
+        layout.operator(DSTS_OT_ExportNcMoveset.bl_idname, text="NC Moveset (.anim)")
 
 
 def menu_func_import(self, context):
@@ -2413,9 +2712,11 @@ def menu_func_export(self, context):
 CLASSES = (
     DSTS_OT_GeomImport,
     DSTS_OT_GeomExport,
+    DSTS_OT_NcGlbImport,
     DSTS_OT_AnimImport,
     DSTS_OT_AnimExport,
     DSTS_OT_AnimExportAll,
+    DSTS_OT_ExportNcMoveset,
     DSTS_OT_ExportAll,
     DSTS_OT_PrepareSelectedAsGeom,
     DSTS_OT_ApplyPoseAsRest,
