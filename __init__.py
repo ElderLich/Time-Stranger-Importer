@@ -1698,6 +1698,22 @@ class DSTS_OT_AnimExportAll(Operator):
         return {'FINISHED'}
 
 
+def _build_rest_pose_anim_file(armature_obj, playback_rate=30.0):
+    """Build the stem.anim rest-pose file from the current export armature."""
+    action = bpy.data.actions.new(f"{armature_obj.name}_rest_export")
+    try:
+        if _seed_rest_pose_into_action(armature_obj, action, frame=1.0) == 0:
+            raise RuntimeError("Armature has no pose bones to export as a base rest pose")
+        return build_basic_hundred_line_anim_from_action(
+            armature_obj,
+            action,
+            playback_rate=playback_rate,
+        )
+    finally:
+        if action.users == 0:
+            bpy.data.actions.remove(action)
+
+
 # NC clip name -> TS animation code. Per TS slot conventions:
 # bn01 idle, bn02 secondary idle, br01 run/move, bd01 hurt, bv01 victory,
 # ba01/ba02 attacks, bs01/bs02 skills, e001 evolution.
@@ -1761,6 +1777,16 @@ class DSTS_OT_ExportNcMoveset(Operator):
 
         exported = []
         missing = []
+
+        base_path = os.path.join(self.directory, f"{target_stem}.anim")
+        try:
+            base_anim = _build_rest_pose_anim_file(armature_obj, playback_rate=30.0)
+            base_anim.to_file(base_path)
+            exported.append("base<-rest")
+        except Exception as exc:
+            print(f"[DSTS] Failed to export base rest animation {target_stem}.anim: {exc}")
+            missing.append("base")
+
         for ts_code, candidates in _NC_MOVESET_MAP:
             track = next((tracks[name] for name in candidates if name in tracks), None)
             if track is None:

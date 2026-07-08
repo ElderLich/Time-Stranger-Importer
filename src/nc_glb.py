@@ -158,11 +158,13 @@ def _glb_all_joints(gltf):
 
 
 def find_missing_root_node(gltf, joints=None):
-    """Return (node_index, name) of the topmost skeleton node above the joints.
+    """Return (node_index, name) of the missing skeleton root above the joints.
 
-    That node (``Bip001`` for NC models) is not referenced by any skin, so
-    Blender's glTF importer does not turn it into a bone. Returns (None, None)
-    when there is no unambiguous single non-joint parent of the joint roots.
+    Most NC models have one immediate non-joint parent above the skinned joint
+    roots (``Bip001``). Some models also skin accessory roots directly under a
+    shared Unity ``root`` node while the body starts below ``Bip001``; in those
+    cases the lowest common non-joint ancestor is the missing export root.
+    Returns (None, None) when no unambiguous common ancestor exists.
     """
     nodes = gltf.get("nodes", [])
     parents = _glb_node_parents(gltf)
@@ -170,15 +172,35 @@ def find_missing_root_node(gltf, joints=None):
     if not joints:
         return None, None
 
-    root_parents = set()
+    joint_roots = []
     for joint in joints:
         parent = parents.get(joint)
-        if parent not in joints:
-            root_parents.add(parent)
-    root_parents.discard(None)
-    if len(root_parents) != 1:
+        if parent is not None and parent not in joints:
+            joint_roots.append(joint)
+    if not joint_roots:
         return None, None
-    candidate = root_parents.pop()
+
+    ancestor_chains = []
+    for joint in sorted(joint_roots):
+        chain = []
+        parent = parents.get(joint)
+        while parent is not None and parent not in joints:
+            chain.append(parent)
+            parent = parents.get(parent)
+        if not chain:
+            return None, None
+        ancestor_chains.append(chain)
+
+    shared_ancestors = set(ancestor_chains[0])
+    for chain in ancestor_chains[1:]:
+        shared_ancestors.intersection_update(chain)
+    if not shared_ancestors:
+        return None, None
+
+    candidate = next(
+        ancestor for ancestor in ancestor_chains[0]
+        if ancestor in shared_ancestors
+    )
     node = nodes[candidate]
     if "mesh" in node or "skin" in node:
         return None, None
