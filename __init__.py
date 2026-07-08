@@ -1724,8 +1724,8 @@ _NC_MOVESET_MAP = (
     ("bd01", ("hurt",)),
     ("bv01", ("win", "win2")),
     ("ba01", ("attack_move", "attack1_move_to")),
-    ("ba02", ("attack_move_to", "attack1_move_to")),
-    ("bs01", ("skill1_move_to", "skill1_move_back")),
+    ("ba02", ("attack", "attack_move_to", "attack1_move_to")),
+    ("bs01", ("skill1", "skill1_move_to", "skill1_move_back")),
     ("bs02", ("skill2_move_to", "skill2_display")),
     ("e001", ("evolution2", "evolution")),
 )
