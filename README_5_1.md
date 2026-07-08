@@ -29,7 +29,7 @@ addons, because they register overlapping import/export menus and modules.
 
 ## Current Scope
 
-Addon version: `1.2.25`
+Addon version: `1.2.26`
 
 Kept:
 
@@ -59,6 +59,12 @@ Kept:
 - New Century / Unity-origin `.glb` import still prefers skinned `*_lod0`
   meshes, but can fall back to skinned `body*` meshes when Unity exports omit
   the `_lod0` suffix.
+- New Century / Unity-origin `.glb` import has a helper-bone fallback for files
+  like `u123`, where Blender promotes non-skin Unity nodes such as `R` and
+  `Bip001` into bones and doubles the body rest offset. The importer first
+  tries Blender's normal glTF import path; if that rest pose fails but the raw
+  glb node hierarchy fits the inverse bind matrices, it discards only that
+  just-imported glb and retries with Blender's original-bind guessing disabled.
 - Original-plugin support modules under `src`, including `DDS.py`,
   `Globals.py`, `Logging.py`, and `utilities/Hash.py`.
 - Bone-name import safeguards for Blender-renamed duplicates, so mesh vertex
@@ -153,10 +159,10 @@ Sidebar:
   the export armature first. Object transforms should be applied, and pose bones
   should be clear unless you intentionally used Pose > Apply > Apply Pose as
   Rest Pose.
-- If a Unity-origin `.glb` still fails bind-pose alignment after the importer
-  logs a valid skinned body fallback, do not loosen the axis-alignment threshold
-  blindly. Some files need a separate non-axis/rest-rebake treatment rather than
-  the normal NC axis conversion path.
+- If a Unity-origin `.glb` still fails bind-pose alignment, do not loosen the
+  axis-alignment threshold blindly. The importer only uses the helper-bone
+  fallback when the glb node hierarchy itself fits the inverse bind matrices;
+  otherwise the source file needs a new diagnostic case.
 - The sidebar `Pose As Rest` button performs the same pose bake that fixed the
   Zeak/Youkomon test export. Use `Clear Pose` if the current pose should not be
   exported.

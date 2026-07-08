@@ -572,6 +572,19 @@ def _select_bind_worlds_for_armature(gltf, binary, current_heads):
     }
 
 
+def _node_bind_alignment_fit(gltf, joint_indices, bind_heads):
+    """Fit raw glTF node worlds to bind heads for retry diagnostics."""
+    nodes = gltf.get("nodes", [])
+    node_worlds = _glb_node_worlds(gltf, set(joint_indices))
+    node_heads = {}
+    for joint in joint_indices:
+        name = nodes[joint].get("name") if 0 <= joint < len(nodes) else None
+        if name in bind_heads:
+            node_heads[name] = node_worlds[joint].translation.copy()
+    _matrix, error = fit_alignment_rotation(node_heads, bind_heads)
+    return len(node_heads), error
+
+
 # ---------------------------------------------------------------------------
 # Action helpers (Blender 4.x legacy F-Curves and 5.x slotted actions)
 # ---------------------------------------------------------------------------
@@ -1087,58 +1100,102 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     gltf, binary, baked_samplers = _bake_cubicspline_samplers_for_blender(
         gltf, binary, float(context.scene.render.fps or 30)
     )
-    import_filepath = filepath
-    temp_glb_path = None
     if baked_samplers:
-        handle = tempfile.NamedTemporaryFile(
-            prefix="dsts_nc_blender_", suffix=".glb", delete=False
-        )
-        temp_glb_path = handle.name
-        handle.close()
-        write_glb_chunks(temp_glb_path, gltf, binary)
-        import_filepath = temp_glb_path
         _log(f"baked {baked_samplers} glTF CUBICSPLINE sampler(s) for Blender")
 
     _log(f"=== Import glb: {filepath}")
-    pre_objects = set(bpy.data.objects)
-    pre_actions = set(bpy.data.actions)
-    try:
-        result = bpy.ops.import_scene.gltf(filepath=import_filepath)
-        if result != {'FINISHED'}:
-            raise NcImportError(f"glTF import returned {result}")
-    finally:
-        if temp_glb_path:
+
+    def _run_gltf_import(guess_original_bind_pose=None):
+        import_filepath = filepath
+        temp_glb_path = None
+        if baked_samplers:
+            handle = tempfile.NamedTemporaryFile(
+                prefix="dsts_nc_blender_", suffix=".glb", delete=False
+            )
+            temp_glb_path = handle.name
+            handle.close()
+            write_glb_chunks(temp_glb_path, gltf, binary)
+            import_filepath = temp_glb_path
+        pre_objects = set(bpy.data.objects)
+        pre_actions = set(bpy.data.actions)
+        try:
+            kwargs = {"filepath": import_filepath}
+            if guess_original_bind_pose is not None:
+                kwargs["guess_original_bind_pose"] = guess_original_bind_pose
+            result = bpy.ops.import_scene.gltf(**kwargs)
+            if result != {'FINISHED'}:
+                raise NcImportError(f"glTF import returned {result}")
+        finally:
+            if temp_glb_path:
+                try:
+                    os.remove(temp_glb_path)
+                except OSError:
+                    pass
+        return (
+            [o for o in bpy.data.objects if o not in pre_objects],
+            [a for a in bpy.data.actions if a not in pre_actions],
+        )
+
+    def _discard_gltf_import(objects, actions):
+        for obj in list(objects):
             try:
-                os.remove(temp_glb_path)
-            except OSError:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            except (ReferenceError, RuntimeError):
                 pass
-    new_objects = [o for o in bpy.data.objects if o not in pre_objects]
-    imported_actions = [a for a in bpy.data.actions if a not in pre_actions]
+        for action in list(actions):
+            try:
+                bpy.data.actions.remove(action)
+            except (ReferenceError, RuntimeError):
+                pass
+        _purge_orphans(skip_actions=True)
 
-    old_armature, body_objects = _find_target_armature(new_objects)
-    bone_names = [b.name for b in old_armature.data.bones]
-    _log(f"armature '{old_armature.name}': {len(bone_names)} bones, "
-         f"{len(body_objects)} lod0 body meshes, {len(imported_actions)} actions")
+    new_objects, imported_actions = _run_gltf_import()
 
-    current_heads = {b.name: b.matrix_local.translation.copy() for b in old_armature.data.bones}
-    bind_worlds, selected_joint_indices, bind_selection = _select_bind_worlds_for_armature(
-        gltf, binary, current_heads
-    )
-    if not bind_worlds:
-        raise NcImportError("glb has no skinned joints (no inverse bind matrices)")
-    _log(
-        "selected skin "
-        f"{bind_selection['skin']} for bind pose "
-        f"({bind_selection['shared']} shared bone(s), "
-        f"fit {bind_selection['error']:.6f}, "
-        f"{bind_selection['skins']} skin(s) in glb)"
-    )
+    def _select_import_state(objects, actions):
+        old_armature, body_objects = _find_target_armature(objects)
+        bone_names = [b.name for b in old_armature.data.bones]
+        _log(f"armature '{old_armature.name}': {len(bone_names)} bones, "
+             f"{len(body_objects)} lod0 body meshes, {len(actions)} actions")
 
-    missing_root_index, missing_root = find_missing_root_node(gltf, selected_joint_indices)
+        current_heads = {b.name: b.matrix_local.translation.copy() for b in old_armature.data.bones}
+        bind_worlds, selected_joint_indices, bind_selection = _select_bind_worlds_for_armature(
+            gltf, binary, current_heads
+        )
+        if not bind_worlds:
+            raise NcImportError("glb has no skinned joints (no inverse bind matrices)")
+        _log(
+            "selected skin "
+            f"{bind_selection['skin']} for bind pose "
+            f"({bind_selection['shared']} shared bone(s), "
+            f"fit {bind_selection['error']:.6f}, "
+            f"{bind_selection['skins']} skin(s) in glb)"
+        )
 
-    if missing_root and missing_root in old_armature.data.bones:
-        _log(f"root node '{missing_root}' already imported as a bone")
-        missing_root_index, missing_root = None, None
+        missing_root_index, missing_root = find_missing_root_node(gltf, selected_joint_indices)
+
+        if missing_root and missing_root in old_armature.data.bones:
+            _log(f"root node '{missing_root}' already imported as a bone")
+            missing_root_index, missing_root = None, None
+        return (
+            old_armature,
+            body_objects,
+            current_heads,
+            bind_worlds,
+            selected_joint_indices,
+            missing_root_index,
+            missing_root,
+        )
+
+    (
+        old_armature,
+        body_objects,
+        current_heads,
+        bind_worlds,
+        selected_joint_indices,
+        missing_root_index,
+        missing_root,
+    ) = _select_import_state(new_objects, imported_actions)
+
     if missing_root is None:
         notes.append("No missing root node detected; skeleton imported as-is")
 
@@ -1153,10 +1210,42 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads)
     _log(f"alignment fit over {len(bind_heads)} joints: max head error {fit_error:.6f}")
     if alignment is None or fit_error > 1e-3:
-        raise NcImportError(
-            f"No axis-aligned rotation maps the imported rest pose onto the glb "
-            f"bind pose (best error {fit_error:.6f})"
+        node_fit_count, node_fit_error = _node_bind_alignment_fit(
+            gltf, selected_joint_indices, bind_heads
         )
+        _log(
+            f"glb node-world -> bind-world retry fit over {node_fit_count} joints: "
+            f"max error {node_fit_error:.6f}"
+        )
+        if node_fit_error <= 1e-3:
+            _log("retrying glTF import with guess_original_bind_pose=False")
+            _discard_gltf_import(new_objects, imported_actions)
+            new_objects, imported_actions = _run_gltf_import(guess_original_bind_pose=False)
+            (
+                old_armature,
+                body_objects,
+                current_heads,
+                bind_worlds,
+                selected_joint_indices,
+                missing_root_index,
+                missing_root,
+            ) = _select_import_state(new_objects, imported_actions)
+            if missing_root is None and "No missing root node detected; skeleton imported as-is" not in notes:
+                notes.append("No missing root node detected; skeleton imported as-is")
+            bind_heads = {name: m.translation.copy() for name, m in bind_worlds.items()
+                          if name in current_heads}
+            alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads)
+            _log(f"retry alignment fit over {len(bind_heads)} joints: max head error {fit_error:.6f}")
+            if alignment is not None and fit_error <= 1e-3:
+                notes.append(
+                    "Retried glb import with Blender original-bind guessing disabled "
+                    "because helper bones distorted the first rest pose"
+                )
+        if alignment is None or fit_error > 1e-3:
+            raise NcImportError(
+                f"No axis-aligned rotation maps the imported rest pose onto the glb "
+                f"bind pose (best error {fit_error:.6f})"
+            )
     alignment_inverse = alignment.inverted()
 
     # Scene hygiene: stop the importer's last-assigned action from evaluating.
