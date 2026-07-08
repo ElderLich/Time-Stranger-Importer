@@ -1277,8 +1277,6 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             f"accepted small bind-pose alignment discrepancy "
             f"({fit_error:.6f} <= {_ALIGNMENT_TOLERANCE:.6f})"
         )
-    alignment_inverse = alignment.inverted()
-
     # Scene hygiene: stop the importer's last-assigned action from evaluating.
     old_anim_data = old_armature.animation_data
     if old_anim_data:
@@ -1339,16 +1337,16 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     # --- per-action root motion (object F-Curves -> root bone deltas) ----
     # The new root bone's world transform is keyed to equal the armature
     # OBJECT's animated world O(t) (= the glb root node's motion), i.e.
-    # delta_root(t) = R^-1 @ O(t). To keep every other bone's world identical
-    # to the original import, the bones that used to be parentless (Bip001
-    # Pelvis) get their basis keys left-multiplied by the constant
-    # K = rest_old^-1 @ M^-1 @ R @ rest_old (identity when R == M).
+    # delta_root(t) = R^-1 @ O(t). The bones that used to be parentless keep
+    # their imported local pose deltas. Their rests are already rebuilt in the
+    # fitted export space, so applying another alignment/root basis correction
+    # double-converts models like x133 where Bip001 and accessory roots carry
+    # real animation.
     rotation_mode = old_armature.rotation_mode
     parent_world = old_armature.parent.matrix_world.copy() if old_armature.parent else Matrix.Identity(4)
     parent_inverse = old_armature.matrix_parent_inverse.copy()
 
     root_deltas_by_action = {}
-    child_tracks_by_action = {}
     pose_slot_by_action = {}
     if missing_root:
         # Defaults for object channels an action does not animate: the static
@@ -1368,34 +1366,6 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
         }
         rest_inverse = root_rest.inverted()
 
-        old_root_bones = [b for b in old_armature.data.bones if b.parent is None]
-        child_corrections = {}
-        for bone in old_root_bones:
-            correction = (
-                bone.matrix_local.inverted() @ alignment_inverse
-                @ root_rest @ bone.matrix_local
-            )
-            if not _matrix_is_identity(correction):
-                child_corrections[bone.name] = correction
-        if child_corrections:
-            _log(f"old root bones needing basis correction: {sorted(child_corrections)}")
-
-        def _bone_basis_at(bone_fcurves, frame):
-            def value(channel, index, default):
-                fc = bone_fcurves.get((channel, index))
-                return fc.evaluate(frame) if fc is not None else default
-            loc = Vector((value("location", 0, 0.0), value("location", 1, 0.0), value("location", 2, 0.0)))
-            quat = Quaternion((
-                value("rotation_quaternion", 0, 1.0), value("rotation_quaternion", 1, 0.0),
-                value("rotation_quaternion", 2, 0.0), value("rotation_quaternion", 3, 0.0),
-            ))
-            if quat.magnitude > 1e-8:
-                quat.normalize()
-            else:
-                quat = Quaternion((1.0, 0.0, 0.0, 0.0))
-            scale = Vector((value("scale", 0, 1.0), value("scale", 1, 1.0), value("scale", 2, 1.0)))
-            return Matrix.Translation(loc) @ quat.to_matrix().to_4x4() @ Matrix.Diagonal((*scale, 1.0))
-
         for action in imported_actions:
             pose_slot, pose_fcurves = _pose_slot_and_fcurves(action)
             if not pose_fcurves:
@@ -1413,27 +1383,6 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
                 object_world = parent_world @ parent_inverse @ basis
                 deltas[frame] = rest_inverse @ object_world
             root_deltas_by_action[action] = deltas
-
-            child_tracks = {}
-            for bone_name, correction in child_corrections.items():
-                prefix = f'pose.bones["{bone_name}"].'
-                bone_fcurves = {}
-                for fc in pose_fcurves:
-                    data_path = fc.data_path
-                    if data_path.startswith(prefix):
-                        bone_fcurves[(data_path[len(prefix):], fc.array_index)] = fc
-                key_frames = sorted({
-                    float(kf.co[0])
-                    for fc in bone_fcurves.values()
-                    for kf in fc.keyframe_points
-                })
-                if not key_frames:
-                    key_frames = [float(frame_start)]
-                child_tracks[bone_name] = {
-                    frame: correction @ _bone_basis_at(bone_fcurves, frame)
-                    for frame in key_frames
-                }
-            child_tracks_by_action[action] = child_tracks
         _log(f"computed root-motion deltas for {len(root_deltas_by_action)} actions")
 
     # --- donor materials / flags / metadata ------------------------------
@@ -1459,7 +1408,6 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
         if action in root_deltas_by_action:
             frame_start, frame_end = _action_frame_span(action)
             tracks = {missing_root: root_deltas_by_action[action]}
-            tracks.update(child_tracks_by_action.get(action, {}))
             write_pose_matrix_keys(
                 action, new_armature, pose_slot_by_action.get(action), tracks,
             )
@@ -1485,8 +1433,12 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             except Exception:
                 pass
         start, _end = _action_frame_span(action)
-        create_nla_track(new_armature, action, action.name, max(start, 1),
-                         scale=1.0, blend_type='COMBINE')
+        _track, strip = create_nla_track(new_armature, action, action.name, max(start, 1),
+                                         scale=1.0, blend_type='REPLACE')
+        try:
+            strip.extrapolation = 'NOTHING'
+        except Exception:
+            pass
     anim_data.action = None
 
     # --- bake meshes to file-consistent space and rebind ------------------
