@@ -65,6 +65,11 @@ Kept:
   tries Blender's normal glTF import path; if that rest pose fails but the raw
   glb node hierarchy fits the inverse bind matrices, it discards only that
   just-imported glb and retries with Blender's original-bind guessing disabled.
+- New Century / Unity-origin `.glb` import accepts tiny bind-pose discrepancies
+  up to `0.01` Blender units before declaring that no axis-aligned conversion
+  exists. This covers models such as `c112`, whose main rig is aligned but a few
+  helper/accessory bones differ from the inverse bind matrices by about five
+  millimeters.
 - Original-plugin support modules under `src`, including `DDS.py`,
   `Globals.py`, `Logging.py`, and `utilities/Hash.py`.
 - Bone-name import safeguards for Blender-renamed duplicates, so mesh vertex

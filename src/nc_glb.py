@@ -498,6 +498,10 @@ def _bake_cubicspline_samplers_for_blender(gltf, binary, fps=30.0):
 # Rigid alignment fitting
 # ---------------------------------------------------------------------------
 
+_STRICT_ALIGNMENT_TOLERANCE = 1e-3
+_ALIGNMENT_TOLERANCE = 1e-2
+
+
 def _axis_rotation_candidates():
     axes = (Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1)))
     candidates = []
@@ -1209,7 +1213,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
         )
     alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads)
     _log(f"alignment fit over {len(bind_heads)} joints: max head error {fit_error:.6f}")
-    if alignment is None or fit_error > 1e-3:
+    if alignment is None or fit_error > _ALIGNMENT_TOLERANCE:
         node_fit_count, node_fit_error = _node_bind_alignment_fit(
             gltf, selected_joint_indices, bind_heads
         )
@@ -1217,7 +1221,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             f"glb node-world -> bind-world retry fit over {node_fit_count} joints: "
             f"max error {node_fit_error:.6f}"
         )
-        if node_fit_error <= 1e-3:
+        if node_fit_error <= _ALIGNMENT_TOLERANCE:
             _log("retrying glTF import with guess_original_bind_pose=False")
             _discard_gltf_import(new_objects, imported_actions)
             new_objects, imported_actions = _run_gltf_import(guess_original_bind_pose=False)
@@ -1236,16 +1240,21 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
                           if name in current_heads}
             alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads)
             _log(f"retry alignment fit over {len(bind_heads)} joints: max head error {fit_error:.6f}")
-            if alignment is not None and fit_error <= 1e-3:
+            if alignment is not None and fit_error <= _ALIGNMENT_TOLERANCE:
                 notes.append(
                     "Retried glb import with Blender original-bind guessing disabled "
                     "because helper bones distorted the first rest pose"
                 )
-        if alignment is None or fit_error > 1e-3:
+        if alignment is None or fit_error > _ALIGNMENT_TOLERANCE:
             raise NcImportError(
                 f"No axis-aligned rotation maps the imported rest pose onto the glb "
                 f"bind pose (best error {fit_error:.6f})"
             )
+    elif fit_error > _STRICT_ALIGNMENT_TOLERANCE:
+        _log(
+            f"accepted small bind-pose alignment discrepancy "
+            f"({fit_error:.6f} <= {_ALIGNMENT_TOLERANCE:.6f})"
+        )
     alignment_inverse = alignment.inverted()
 
     # Scene hygiene: stop the importer's last-assigned action from evaluating.
@@ -1276,7 +1285,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
         node_conversion, node_fit_error = fit_alignment_rotation(node_heads, bind_heads)
         _log(f"node-world -> bind-world fit over {len(node_heads)} joints: "
              f"max error {node_fit_error:.6f}")
-        if node_conversion is None or node_fit_error > 1e-3:
+        if node_conversion is None or node_fit_error > _ALIGNMENT_TOLERANCE:
             raise NcImportError(
                 f"glb node hierarchy does not coincide with the bind pose "
                 f"(best fit error {node_fit_error:.6f}); cannot place the root bone"

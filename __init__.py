@@ -1265,8 +1265,14 @@ class DSTS_OT_NcGlbImport(Operator, ImportHelper):
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 
+        info_note_prefixes = (
+            "Scene FPS set to 30",
+            "No missing root node detected",
+            "Retried glb import with Blender original-bind guessing disabled",
+        )
         for note in notes:
-            self.report({'WARNING'}, note)
+            level = {'INFO'} if note.startswith(info_note_prefixes) else {'WARNING'}
+            self.report(level, note)
         collection["DSTS_material_donor_chr"] = _normalize_chr_stem(self.donor_chr)[0]
         self.report(
             {'INFO'},
