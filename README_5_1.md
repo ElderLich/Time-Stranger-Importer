@@ -97,6 +97,10 @@ Kept:
   texture retargeting uses that hint before falling back, so multi-material
   models such as BeelStarmon X keep wings/capes/accessories on their generated
   atlas instead of collapsing every material to `a01`.
+- New Century moveset export writes the `fe02` field/profile display slot from
+  the imported `idle` clip. Some `model_setting` rows request this slot directly;
+  without it the game can fall back to a mismatched donor pose even when `bn01`
+  looks correct in Blender.
 
 Removed from the active addon:
 
