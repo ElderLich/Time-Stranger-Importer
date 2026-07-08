@@ -1699,11 +1699,10 @@ class DSTS_OT_AnimExportAll(Operator):
 
 
 # NC clip name -> TS animation code. Per TS slot conventions:
-# bn01 idle, fe02 field/profile display, bn02 secondary idle, br01 run/move,
-# bd01 hurt, bv01 victory, ba01/ba02 attacks, bs01/bs02 skills, e001 evolution.
+# bn01 idle, bn02 secondary idle, br01 run/move, bd01 hurt, bv01 victory,
+# ba01/ba02 attacks, bs01/bs02 skills, e001 evolution.
 _NC_MOVESET_MAP = (
     ("bn01", ("idle",)),
-    ("fe02", ("idle",)),
     ("bn02", ("stand", "tongyong")),
     ("br01", ("move2", "move")),
     ("bd01", ("hurt",)),
