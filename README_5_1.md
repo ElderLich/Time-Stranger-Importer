@@ -29,7 +29,7 @@ addons, because they register overlapping import/export menus and modules.
 
 ## Current Scope
 
-Addon version: `1.2.24`
+Addon version: `1.2.25`
 
 Kept:
 
@@ -46,6 +46,19 @@ Kept:
 - Diffuse/material preview fallbacks, including DDS previews.
 - Eye overlay preview fixes for shell/pupil layering.
 - Blender 5.1 action/NLA compatibility helpers.
+- New Century / Unity-origin `.glb` import pre-bakes glTF `CUBICSPLINE`
+  transform animation to exact 30 fps `LINEAR` keys before Blender import.
+  This avoids Blender reconstructing Unity cubic quaternion tracks as Bezier
+  F-Curves, which can reintroduce tiny leg/foot jitter that is already fixed
+  in the source `.glb`.
+- New Century / Unity-origin `.glb` import isolates per-skin bind poses before
+  fitting the DSTS export armature. This handles files with several Unity scene
+  roots or duplicated skeleton node names, such as `x158_b`, `x158_d`,
+  `x158_m`, and `x158_p`, without letting unrelated skins poison the bind-pose
+  alignment check.
+- New Century / Unity-origin `.glb` import still prefers skinned `*_lod0`
+  meshes, but can fall back to skinned `body*` meshes when Unity exports omit
+  the `_lod0` suffix.
 - Original-plugin support modules under `src`, including `DDS.py`,
   `Globals.py`, `Logging.py`, and `utilities/Hash.py`.
 - Bone-name import safeguards for Blender-renamed duplicates, so mesh vertex
@@ -140,6 +153,10 @@ Sidebar:
   the export armature first. Object transforms should be applied, and pose bones
   should be clear unless you intentionally used Pose > Apply > Apply Pose as
   Rest Pose.
+- If a Unity-origin `.glb` still fails bind-pose alignment after the importer
+  logs a valid skinned body fallback, do not loosen the axis-alignment threshold
+  blindly. Some files need a separate non-axis/rest-rebake treatment rather than
+  the normal NC axis conversion path.
 - The sidebar `Pose As Rest` button performs the same pose bake that fixed the
   Zeak/Youkomon test export. Use `Clear Pose` if the current pose should not be
   exported.

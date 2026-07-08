@@ -48,6 +48,7 @@ import math
 import os
 import re
 import struct
+import tempfile
 
 from mathutils import Euler, Matrix, Quaternion, Vector
 
@@ -121,6 +122,26 @@ def read_glb_chunks(filepath):
         return gltf, binary
 
 
+def _pad4(data, pad):
+    return data + (pad * ((4 - (len(data) % 4)) % 4))
+
+
+def write_glb_chunks(filepath, gltf, binary):
+    """Write a binary glTF v2 file from JSON + BIN chunks."""
+    gltf.setdefault("buffers", [{"byteLength": 0}])
+    gltf["buffers"][0]["byteLength"] = len(binary)
+    json_chunk = _pad4(json.dumps(gltf, separators=(",", ":")).encode("utf-8"), b" ")
+    bin_chunk = _pad4(bytes(binary), b"\x00")
+    total = 12 + 8 + len(json_chunk) + (8 + len(bin_chunk) if bin_chunk else 0)
+    with open(filepath, "wb") as handle:
+        handle.write(struct.pack("<III", 0x46546C67, 2, total))
+        handle.write(struct.pack("<II", len(json_chunk), 0x4E4F534A))
+        handle.write(json_chunk)
+        if bin_chunk:
+            handle.write(struct.pack("<II", len(bin_chunk), 0x004E4942))
+            handle.write(bin_chunk)
+
+
 def _glb_node_parents(gltf):
     parents = {}
     for index, node in enumerate(gltf.get("nodes", [])):
@@ -136,7 +157,7 @@ def _glb_all_joints(gltf):
     return joints
 
 
-def find_missing_root_node(gltf):
+def find_missing_root_node(gltf, joints=None):
     """Return (node_index, name) of the topmost skeleton node above the joints.
 
     That node (``Bip001`` for NC models) is not referenced by any skin, so
@@ -145,7 +166,7 @@ def find_missing_root_node(gltf):
     """
     nodes = gltf.get("nodes", [])
     parents = _glb_node_parents(gltf)
-    joints = _glb_all_joints(gltf)
+    joints = set(_glb_all_joints(gltf) if joints is None else joints)
     if not joints:
         return None, None
 
@@ -201,37 +222,276 @@ def _glb_node_worlds(gltf, indices):
     return {i: world(i) for i in indices}
 
 
-def _read_ibm_bind_worlds(gltf, binary):
-    """{joint node name: 4x4 bind world Matrix} from skin inverseBindMatrices."""
+def _read_ibm_bind_worlds_by_skin(gltf, binary):
+    """Per-skin bind worlds from inverseBindMatrices.
+
+    Multi-root Unity GLBs can contain duplicate skeleton names under several
+    skins. Keep each skin isolated so the importer can pick the bind pose that
+    matches Blender's chosen skinned armature instead of overwriting by name.
+    """
     nodes = gltf.get("nodes", [])
     accessors = gltf.get("accessors", [])
     views = gltf.get("bufferViews", [])
-    bind_worlds = {}
-    for skin in gltf.get("skins", []):
+    results = []
+    for skin_index, skin in enumerate(gltf.get("skins", [])):
         joints = skin.get("joints", [])
         accessor_index = skin.get("inverseBindMatrices")
+        bind_worlds = {}
         if accessor_index is None:
             for joint in joints:
                 bind_worlds[nodes[joint].get("name")] = Matrix.Identity(4)
-            continue
-        accessor = accessors[accessor_index]
-        if accessor.get("componentType") != 5126 or accessor.get("type") != "MAT4":
-            raise NcImportError("Unsupported inverseBindMatrices accessor format")
-        view = views[accessor["bufferView"]]
-        offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
-        count = accessor["count"]
-        floats = struct.unpack_from(f"<{count * 16}f", binary, offset)
-        for j, joint in enumerate(joints):
-            columns = floats[j * 16:(j + 1) * 16]
-            # glTF matrices are column-major.
-            ibm = Matrix((
-                (columns[0], columns[4], columns[8], columns[12]),
-                (columns[1], columns[5], columns[9], columns[13]),
-                (columns[2], columns[6], columns[10], columns[14]),
-                (columns[3], columns[7], columns[11], columns[15]),
-            ))
-            bind_worlds[nodes[joint].get("name")] = ibm.inverted()
+        else:
+            accessor = accessors[accessor_index]
+            if accessor.get("componentType") != 5126 or accessor.get("type") != "MAT4":
+                raise NcImportError("Unsupported inverseBindMatrices accessor format")
+            view = views[accessor["bufferView"]]
+            offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+            count = accessor["count"]
+            floats = struct.unpack_from(f"<{count * 16}f", binary, offset)
+            for j, joint in enumerate(joints):
+                columns = floats[j * 16:(j + 1) * 16]
+                # glTF matrices are column-major.
+                ibm = Matrix((
+                    (columns[0], columns[4], columns[8], columns[12]),
+                    (columns[1], columns[5], columns[9], columns[13]),
+                    (columns[2], columns[6], columns[10], columns[14]),
+                    (columns[3], columns[7], columns[11], columns[15]),
+                ))
+                bind_worlds[nodes[joint].get("name")] = ibm.inverted()
+        results.append({
+            "index": skin_index,
+            "joints": set(joints),
+            "bind_worlds": bind_worlds,
+        })
+    return results
+
+
+def _read_ibm_bind_worlds(gltf, binary):
+    """{joint node name: 4x4 bind world Matrix} from skin inverseBindMatrices."""
+    bind_worlds = {}
+    for entry in _read_ibm_bind_worlds_by_skin(gltf, binary):
+        bind_worlds.update(entry["bind_worlds"])
     return bind_worlds
+
+
+# ---------------------------------------------------------------------------
+# Blender-safe glTF animation pre-bake
+# ---------------------------------------------------------------------------
+
+_GLTF_FLOAT = 5126
+_ACCESSOR_COMPONENTS = {
+    "SCALAR": 1,
+    "VEC2": 2,
+    "VEC3": 3,
+    "VEC4": 4,
+    "MAT4": 16,
+}
+
+
+def _buffer_bytearray(gltf, binary):
+    byte_length = len(binary)
+    if gltf.get("buffers"):
+        byte_length = min(byte_length, int(gltf["buffers"][0].get("byteLength", byte_length)))
+    return bytearray(binary[:byte_length])
+
+
+def _read_float_accessor(gltf, binary, accessor_index):
+    accessors = gltf.get("accessors", [])
+    views = gltf.get("bufferViews", [])
+    accessor = accessors[accessor_index]
+    if accessor.get("sparse"):
+        raise NcImportError("Sparse animation accessors are not supported")
+    if accessor.get("componentType") != _GLTF_FLOAT:
+        raise NcImportError("Only FLOAT animation accessors are supported")
+    accessor_type = accessor.get("type")
+    components = _ACCESSOR_COMPONENTS.get(accessor_type)
+    if components is None:
+        raise NcImportError(f"Unsupported accessor type: {accessor_type}")
+    view = views[accessor["bufferView"]]
+    offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+    stride = view.get("byteStride", components * 4)
+    rows = []
+    for index in range(accessor["count"]):
+        values = struct.unpack_from(
+            f"<{components}f", binary, offset + index * stride
+        )
+        rows.append(values[0] if components == 1 else list(values))
+    return rows
+
+
+def _append_float_accessor(gltf, binary, values, accessor_type):
+    components = _ACCESSOR_COMPONENTS[accessor_type]
+    while len(binary) % 4:
+        binary.append(0)
+    byte_offset = len(binary)
+    if components == 1:
+        for value in values:
+            binary.extend(struct.pack("<f", float(value)))
+    else:
+        for row in values:
+            if len(row) != components:
+                raise NcImportError(
+                    f"Expected {components} components for {accessor_type}, got {len(row)}"
+                )
+            binary.extend(struct.pack(f"<{components}f", *[float(v) for v in row]))
+
+    gltf.setdefault("bufferViews", []).append({
+        "buffer": 0,
+        "byteOffset": byte_offset,
+        "byteLength": len(binary) - byte_offset,
+    })
+    accessor = {
+        "bufferView": len(gltf["bufferViews"]) - 1,
+        "componentType": _GLTF_FLOAT,
+        "count": len(values),
+        "type": accessor_type,
+    }
+    if values:
+        if components == 1:
+            flat = [float(v) for v in values]
+            accessor["min"] = [min(flat)]
+            accessor["max"] = [max(flat)]
+        else:
+            cols = list(zip(*values))
+            accessor["min"] = [float(min(col)) for col in cols]
+            accessor["max"] = [float(max(col)) for col in cols]
+    gltf.setdefault("accessors", []).append(accessor)
+    gltf.setdefault("buffers", [{"byteLength": 0}])
+    gltf["buffers"][0]["byteLength"] = len(binary)
+    return len(gltf["accessors"]) - 1
+
+
+def _normalize_quat_xyzw(values):
+    mag = math.sqrt(sum(float(v) * float(v) for v in values))
+    if mag <= 1e-12:
+        return [0.0, 0.0, 0.0, 1.0]
+    return [float(v) / mag for v in values]
+
+
+def _slerp_xyzw(a, b, t):
+    a = _normalize_quat_xyzw(a)
+    b = _normalize_quat_xyzw(b)
+    dot = sum(a[i] * b[i] for i in range(4))
+    if dot < 0.0:
+        b = [-v for v in b]
+        dot = -dot
+    if dot > 0.9995:
+        return _normalize_quat_xyzw([a[i] + t * (b[i] - a[i]) for i in range(4)])
+    theta0 = math.acos(max(-1.0, min(1.0, dot)))
+    theta = theta0 * t
+    sin_theta = math.sin(theta)
+    sin_theta0 = math.sin(theta0)
+    s0 = math.cos(theta) - dot * sin_theta / sin_theta0
+    s1 = sin_theta / sin_theta0
+    return [s0 * a[i] + s1 * b[i] for i in range(4)]
+
+
+def _sample_gltf_track(times, values, interpolation, target_path, time):
+    if not times:
+        raise NcImportError("Animation sampler has no input keys")
+    ts = [float(v) for v in times]
+    if time <= ts[0]:
+        return list(values[1] if interpolation == "CUBICSPLINE" else values[0])
+    if time >= ts[-1]:
+        last = len(ts) - 1
+        return list(values[last * 3 + 1] if interpolation == "CUBICSPLINE" else values[last])
+
+    hi = 1
+    while hi < len(ts) and ts[hi] < time:
+        hi += 1
+    lo = hi - 1
+    t0, t1 = ts[lo], ts[hi]
+    dt = t1 - t0
+    u = (time - t0) / dt if dt > 0.0 else 0.0
+
+    if interpolation == "CUBICSPLINE":
+        if len(values) != len(times) * 3:
+            raise NcImportError("CUBICSPLINE output count does not equal input_count * 3")
+        v0 = [float(v) for v in values[lo * 3 + 1]]
+        out0 = [float(v) for v in values[lo * 3 + 2]]
+        in1 = [float(v) for v in values[hi * 3]]
+        v1 = [float(v) for v in values[hi * 3 + 1]]
+        u2 = u * u
+        u3 = u2 * u
+        out = [
+            (2.0 * u3 - 3.0 * u2 + 1.0) * v0[i]
+            + (u3 - 2.0 * u2 + u) * dt * out0[i]
+            + (-2.0 * u3 + 3.0 * u2) * v1[i]
+            + (u3 - u2) * dt * in1[i]
+            for i in range(len(v0))
+        ]
+        return _normalize_quat_xyzw(out) if target_path == "rotation" else out
+
+    a = [float(v) for v in values[lo]]
+    b = [float(v) for v in values[hi]]
+    if target_path == "rotation":
+        return _slerp_xyzw(a, b, u)
+    return [a[i] + u * (b[i] - a[i]) for i in range(len(a))]
+
+
+def _bake_cubicspline_samplers_for_blender(gltf, binary, fps=30.0):
+    """Bake glTF CUBICSPLINE transform tracks to exact 30 fps LINEAR keys.
+
+    Blender imports glTF cubic quaternion tracks as native Bezier F-Curves. That
+    is close, but not exact enough for the tiny foot-lock corrections used by
+    Unity-origin NC/Next Order GLBs. Baking before Blender sees the file keeps
+    Blender's later integer-frame resample faithful to the glTF evaluator.
+    """
+    if fps <= 0.0:
+        raise NcImportError("Animation bake FPS must be positive")
+    binary = _buffer_bytearray(gltf, binary)
+    baked = 0
+    for anim in gltf.get("animations", []) or []:
+        samplers = anim.get("samplers", []) or []
+        sampler_paths = {}
+        for channel in anim.get("channels", []) or []:
+            target = channel.get("target", {}) or {}
+            path = target.get("path")
+            if path in {"translation", "rotation", "scale"}:
+                sampler_paths.setdefault(channel.get("sampler"), path)
+
+        for sampler_index, sampler in enumerate(samplers):
+            if sampler.get("interpolation", "LINEAR") != "CUBICSPLINE":
+                continue
+            target_path = sampler_paths.get(sampler_index)
+            if target_path not in {"translation", "rotation", "scale"}:
+                continue
+            times = _read_float_accessor(gltf, binary, sampler["input"])
+            values = _read_float_accessor(gltf, binary, sampler["output"])
+            if not times:
+                continue
+            end_time = float(times[-1])
+            frame_count = int(math.floor(end_time * fps + 0.5)) + 1
+            frame_count = max(frame_count, 1)
+            baked_times = [min(end_time, frame / fps) for frame in range(frame_count)]
+            baked_values = []
+            previous_quat = None
+            for time in baked_times:
+                value = _sample_gltf_track(times, values, "CUBICSPLINE", target_path, time)
+                if target_path == "rotation":
+                    value = _normalize_quat_xyzw(value)
+                    if previous_quat is not None and sum(previous_quat[i] * value[i] for i in range(4)) < 0.0:
+                        value = [-v for v in value]
+                    previous_quat = value
+                baked_values.append(value)
+
+            sampler["input"] = _append_float_accessor(gltf, binary, baked_times, "SCALAR")
+            sampler["output"] = _append_float_accessor(
+                gltf,
+                binary,
+                baked_values,
+                "VEC4" if target_path == "rotation" else "VEC3",
+            )
+            sampler["interpolation"] = "LINEAR"
+            baked += 1
+
+    if baked:
+        extras = gltf.setdefault("asset", {}).setdefault("extras", {})
+        extras.setdefault("dsts_blender_import", {})["cubicspline_bake"] = {
+            "fps": fps,
+            "samplers": baked,
+        }
+    return gltf, binary, baked
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +529,47 @@ def fit_alignment_rotation(source_points, target_points):
         if error < best_error:
             best_matrix, best_error = candidate, error
     return best_matrix, best_error
+
+
+def _select_bind_worlds_for_armature(gltf, binary, current_heads):
+    """Pick the skin bind pose that matches Blender's selected armature."""
+    skin_entries = _read_ibm_bind_worlds_by_skin(gltf, binary)
+    if not skin_entries:
+        return {}, set(), {
+            "skin": None,
+            "shared": 0,
+            "error": float("inf"),
+            "skins": 0,
+        }
+
+    min_shared = max(3, len(current_heads) // 2)
+    scored = []
+    for entry in skin_entries:
+        bind_worlds = entry["bind_worlds"]
+        shared = sorted(set(current_heads) & set(bind_worlds))
+        if shared:
+            _matrix, error = fit_alignment_rotation(
+                current_heads,
+                {name: bind_worlds[name].translation.copy() for name in shared},
+            )
+        else:
+            error = float("inf")
+        scored.append({
+            **entry,
+            "shared": len(shared),
+            "error": error,
+        })
+
+    eligible = [entry for entry in scored if entry["shared"] >= min_shared]
+    pool = eligible or scored
+    best = min(pool, key=lambda entry: (entry["error"], -entry["shared"], entry["index"]))
+    return best["bind_worlds"], best["joints"], {
+        "skin": best["index"],
+        "shared": best["shared"],
+        "error": best["error"],
+        "skins": len(skin_entries),
+        "eligible": len(eligible),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -526,22 +827,49 @@ def _find_target_armature(new_objects):
     armatures = [o for o in new_objects if o.type == 'ARMATURE']
     best = None
     best_meshes = []
-    for armature in armatures:
-        lod0 = []
+    best_used_fallback = False
+
+    def skinned_meshes(armature):
+        meshes = []
         for obj in new_objects:
             if obj.type != 'MESH':
                 continue
-            if not _base_name(obj.name).lower().endswith("_lod0"):
-                continue
             if any(m.type == 'ARMATURE' and m.object == armature for m in obj.modifiers):
-                lod0.append(obj)
-        if lod0 and (best is None
-                     or (len(lod0), len(armature.data.bones)) > (len(best_meshes), len(best.data.bones))):
-            best, best_meshes = armature, lod0
+                meshes.append(obj)
+        return meshes
+
+    for armature in armatures:
+        skinned = skinned_meshes(armature)
+        lod0 = [obj for obj in skinned if _base_name(obj.name).lower().endswith("_lod0")]
+        body = [obj for obj in skinned if _base_name(obj.name).lower().startswith("body")]
+        candidates = lod0 or body or skinned
+        if not candidates:
+            continue
+        used_fallback = not bool(lod0)
+        score = (
+            0 if used_fallback else 1,
+            len(candidates),
+            sum(len(obj.data.vertices) for obj in candidates),
+            len(armature.data.bones),
+        )
+        best_score = (
+            -1 if best is None or best_used_fallback else 0,
+            len(best_meshes),
+            sum(len(obj.data.vertices) for obj in best_meshes),
+            len(best.data.bones) if best else 0,
+        )
+        if best is None or score > best_score:
+            best, best_meshes = armature, candidates
+            best_used_fallback = used_fallback
     if best is None:
         raise NcImportError(
-            "No armature with skinned *_lod0 meshes found in the glb "
+            "No armature with skinned body meshes found in the glb "
             "(is this an nc-extractor model.glb?)"
+        )
+    if best_used_fallback:
+        _log(
+            "no skinned *_lod0 meshes found; using skinned body mesh fallback "
+            f"({', '.join(obj.name for obj in best_meshes)})"
         )
     best_meshes.sort(key=lambda o: _base_name(o.name))
     return best, best_meshes
@@ -756,17 +1084,34 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
         notes.append("Scene FPS set to 30 to match NC animation sampling")
 
     gltf, binary = read_glb_chunks(filepath)
-    missing_root_index, missing_root = find_missing_root_node(gltf)
-    bind_worlds = _read_ibm_bind_worlds(gltf, binary)
-    if not bind_worlds:
-        raise NcImportError("glb has no skinned joints (no inverse bind matrices)")
+    gltf, binary, baked_samplers = _bake_cubicspline_samplers_for_blender(
+        gltf, binary, float(context.scene.render.fps or 30)
+    )
+    import_filepath = filepath
+    temp_glb_path = None
+    if baked_samplers:
+        handle = tempfile.NamedTemporaryFile(
+            prefix="dsts_nc_blender_", suffix=".glb", delete=False
+        )
+        temp_glb_path = handle.name
+        handle.close()
+        write_glb_chunks(temp_glb_path, gltf, binary)
+        import_filepath = temp_glb_path
+        _log(f"baked {baked_samplers} glTF CUBICSPLINE sampler(s) for Blender")
 
     _log(f"=== Import glb: {filepath}")
     pre_objects = set(bpy.data.objects)
     pre_actions = set(bpy.data.actions)
-    result = bpy.ops.import_scene.gltf(filepath=filepath)
-    if result != {'FINISHED'}:
-        raise NcImportError(f"glTF import returned {result}")
+    try:
+        result = bpy.ops.import_scene.gltf(filepath=import_filepath)
+        if result != {'FINISHED'}:
+            raise NcImportError(f"glTF import returned {result}")
+    finally:
+        if temp_glb_path:
+            try:
+                os.remove(temp_glb_path)
+            except OSError:
+                pass
     new_objects = [o for o in bpy.data.objects if o not in pre_objects]
     imported_actions = [a for a in bpy.data.actions if a not in pre_actions]
 
@@ -775,6 +1120,22 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     _log(f"armature '{old_armature.name}': {len(bone_names)} bones, "
          f"{len(body_objects)} lod0 body meshes, {len(imported_actions)} actions")
 
+    current_heads = {b.name: b.matrix_local.translation.copy() for b in old_armature.data.bones}
+    bind_worlds, selected_joint_indices, bind_selection = _select_bind_worlds_for_armature(
+        gltf, binary, current_heads
+    )
+    if not bind_worlds:
+        raise NcImportError("glb has no skinned joints (no inverse bind matrices)")
+    _log(
+        "selected skin "
+        f"{bind_selection['skin']} for bind pose "
+        f"({bind_selection['shared']} shared bone(s), "
+        f"fit {bind_selection['error']:.6f}, "
+        f"{bind_selection['skins']} skin(s) in glb)"
+    )
+
+    missing_root_index, missing_root = find_missing_root_node(gltf, selected_joint_indices)
+
     if missing_root and missing_root in old_armature.data.bones:
         _log(f"root node '{missing_root}' already imported as a bone")
         missing_root_index, missing_root = None, None
@@ -782,7 +1143,6 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
         notes.append("No missing root node detected; skeleton imported as-is")
 
     # --- rigid alignment: imported rests -> glb bind worlds --------------
-    current_heads = {b.name: b.matrix_local.translation.copy() for b in old_armature.data.bones}
     bind_heads = {name: m.translation.copy() for name, m in bind_worlds.items()
                   if name in current_heads}
     if len(bind_heads) < max(3, len(current_heads) // 2):
@@ -816,7 +1176,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     root_rest = None
     node_conversion = None
     if missing_root is not None:
-        joint_indices = _glb_all_joints(gltf)
+        joint_indices = set(selected_joint_indices)
         node_worlds = _glb_node_worlds(gltf, joint_indices | {missing_root_index})
         glb_nodes = gltf.get("nodes", [])
         node_heads = {}
