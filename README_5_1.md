@@ -92,6 +92,11 @@ Kept:
   If an exact old-family rename such as `chr027a02 -> chr110a02` is missing, it
   falls back to the standard target slot for that uniform, such as `chr110a01`
   for diffuse color.
+- New Century / Unity-origin `.glb` import tags each sorted body mesh with a
+  preferred DSTS body atlas (`body_0 -> a01`, `body_1 -> a02`, etc.). Material
+  texture retargeting uses that hint before falling back, so multi-material
+  models such as BeelStarmon X keep wings/capes/accessories on their generated
+  atlas instead of collapsing every material to `a01`.
 
 Removed from the active addon:
 

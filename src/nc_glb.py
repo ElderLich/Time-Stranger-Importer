@@ -1478,8 +1478,21 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
         notes.append(f"Baked meshes are not grounded (min Z {min_z:.3f}); "
                      "check the model's bind pose")
 
+    material_use_counts = {}
     for index, obj in enumerate(body_objects):
         info = body_infos[min(index, len(body_infos) - 1)]
+        preferred_atlas = f"a{index + 1:02d}"
+        material_obj = info["material"]
+        if material_obj is not None:
+            material_key = material_obj.name
+            material_use_count = material_use_counts.get(material_key, 0)
+            material_use_counts[material_key] = material_use_count + 1
+            if material_use_count:
+                info = dict(info)
+                material_obj = material_obj.copy()
+                material_obj.name = f"{material_key}_{preferred_atlas}"
+                info["material"] = material_obj
+            material_obj["DSTS_nc_atlas"] = preferred_atlas
 
         if not obj.data.uv_layers:
             raise NcImportError(f"{obj.name}: mesh has no UV layers")
@@ -1488,6 +1501,8 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
 
         obj.data.materials.clear()
         obj.data.materials.append(info["material"])
+        obj["DSTS_nc_atlas"] = preferred_atlas
+        obj.data["DSTS_nc_atlas"] = preferred_atlas
         for key, value in info["flags"].items():
             obj.data[key] = value
 
@@ -1507,7 +1522,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             coll.objects.unlink(obj)
         collection.objects.link(obj)
         set_flags = [i for i in range(8) if info["flags"][f"DSTS_flag_{i}"]]
-        _log(f"  {obj.name}: material={info['material'].name} flags_set={set_flags} "
+        _log(f"  {obj.name}: material={info['material'].name} atlas={preferred_atlas} flags_set={set_flags} "
              f"verts={len(obj.data.vertices)}")
 
     # --- outline ----------------------------------------------------------

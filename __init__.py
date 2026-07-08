@@ -475,16 +475,43 @@ def _default_texture_stem_for_uniform(target_stem, uniform):
     return target_stem + suffix if suffix else ""
 
 
-def _texture_stems_for_uniform(target_stem, uniform, current_stem):
+def _normalize_body_atlas(value):
+    text = str(value or "").strip().lower()
+    return text if re.fullmatch(r"a\d{2}", text) else ""
+
+
+def _apply_preferred_body_atlas(target_stem, stem, preferred_atlas):
+    preferred_atlas = _normalize_body_atlas(preferred_atlas)
+    if not preferred_atlas:
+        return ""
+    stem = _strip_texture_extension(stem)
+    if not stem.lower().startswith(target_stem.lower()):
+        return ""
+    suffix = stem[len(target_stem):]
+    match = re.match(r"a\d{2}(.*)$", suffix, re.IGNORECASE)
+    if not match:
+        return ""
+    return target_stem + preferred_atlas + match.group(1)
+
+
+def _texture_stems_for_uniform(target_stem, uniform, current_stem, preferred_atlas=""):
     current_stem = _strip_texture_extension(current_stem)
     stems = []
     match = re.match(r"chr\d+(.+)", str(current_stem or ""), re.IGNORECASE)
     if match:
-        stems.append(target_stem + match.group(1))
+        remapped = target_stem + match.group(1)
+        preferred = _apply_preferred_body_atlas(target_stem, remapped, preferred_atlas)
+        if preferred:
+            stems.append(preferred)
+        if remapped not in stems:
+            stems.append(remapped)
     elif current_stem:
         stems.append(current_stem)
 
     fallback = _default_texture_stem_for_uniform(target_stem, uniform)
+    preferred_fallback = _apply_preferred_body_atlas(target_stem, fallback, preferred_atlas)
+    if preferred_fallback and preferred_fallback not in stems:
+        stems.append(preferred_fallback)
     if fallback and fallback not in stems:
         stems.append(fallback)
     return stems
@@ -2331,18 +2358,32 @@ class DSTS_OT_RetargetMaterialTextures(Operator):
             return {'CANCELLED'}
 
         materials = []
+        preferred_atlas_by_material = {}
         for obj in _target_meshes(context, collection, self.apply_to_all_geom_meshes):
+            preferred_atlas = _normalize_body_atlas(
+                obj.get("DSTS_nc_atlas", "") or obj.data.get("DSTS_nc_atlas", "")
+            )
             for mat in getattr(obj.data, "materials", []):
                 if mat and mat not in materials:
                     materials.append(mat)
+                if mat and preferred_atlas and mat not in preferred_atlas_by_material:
+                    preferred_atlas_by_material[mat] = preferred_atlas
 
         changed = 0
         missing = set()
         fallback_used = set()
         for mat in materials:
+            preferred_atlas = _normalize_body_atlas(
+                preferred_atlas_by_material.get(mat, "") or mat.get("DSTS_nc_atlas", "")
+            )
             for node in _iter_material_texture_nodes(mat):
                 uniform = _texture_uniform_from_node(node)
-                candidate_stems = _texture_stems_for_uniform(target_stem, uniform, _texture_stem_from_node(node))
+                candidate_stems = _texture_stems_for_uniform(
+                    target_stem,
+                    uniform,
+                    _texture_stem_from_node(node),
+                    preferred_atlas=preferred_atlas,
+                )
                 if not candidate_stems:
                     continue
                 new_stem = candidate_stems[0]
