@@ -12,10 +12,10 @@ D:\Digimon Modding\Programs\Blender Tools\DSTS_BlenderPlugin\DSTS_Unified
 
 ## Install
 
-Source folder:
+Repository folder:
 
 ```text
-D:\Digimon Modding\Programs\Blender Tools\Time Stranger Importer\Time_Stranger_Importer
+D:\Programs\GitHub\Digimon Modding\Time Stranger Importer
 ```
 
 Installed Blender 5.1 addon folder:
@@ -26,6 +26,17 @@ C:\Users\Shanalotte\AppData\Roaming\Blender Foundation\Blender\5.1\scripts\addon
 
 Do not enable this addon at the same time as older Nymic/Romsstar/DSTS Unified
 addons, because they register overlapping import/export menus and modules.
+
+## CI Package
+
+GitHub Actions validates the Python syntax and builds an installable addon zip
+on every push and pull request:
+
+```text
+Time_Stranger_Importer.zip
+```
+
+Tagged releases named like `v1.2.26` attach the zip to the GitHub Release.
 
 ## Current Scope
 

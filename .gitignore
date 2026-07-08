@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.log
+*.tmp
+
+dist/
+build/
+*.blend1
+*.tmp.glb
+
+.vscode/
+.idea/
