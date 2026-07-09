@@ -835,6 +835,202 @@ def write_pose_matrix_keys(action, armature_obj, pose_slot, tracks):
     anim_data.action = previous_action
 
 
+def _assign_action_slot(anim_data, pose_slot):
+    if pose_slot is not None and hasattr(anim_data, "action_slot"):
+        try:
+            anim_data.action_slot = pose_slot
+        except Exception as exc:  # pragma: no cover - defensive
+            _log(f"could not assign action slot: {exc}")
+
+
+def _set_pose_to_rest(armature_obj):
+    for pose_bone in armature_obj.pose.bones:
+        pose_bone.location = (0.0, 0.0, 0.0)
+        pose_bone.rotation_mode = "QUATERNION"
+        pose_bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pose_bone.rotation_euler = (0.0, 0.0, 0.0)
+        try:
+            pose_bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
+        except Exception:
+            pass
+        pose_bone.scale = (1.0, 1.0, 1.0)
+
+
+def _bone_depth_groups(armature_obj):
+    depth_groups = []
+    for bone in armature_obj.data.bones:
+        depth = 0
+        parent = bone.parent
+        while parent is not None:
+            depth += 1
+            parent = parent.parent
+        while len(depth_groups) <= depth:
+            depth_groups.append([])
+        depth_groups[depth].append(bone)
+    return depth_groups
+
+
+def _restore_bone_flags(armature_obj, flags, *, force_game_location=False):
+    for bone in armature_obj.data.bones:
+        local_location, inherit_rotation, inherit_scale = flags[bone.name]
+        bone.use_local_location = False if force_game_location else local_location
+        bone.use_inherit_rotation = inherit_rotation
+        bone.inherit_scale = inherit_scale
+
+
+def _sample_action_pose_matrices(context, armature_obj, action, pose_slot, frames, flags):
+    anim_data = armature_obj.animation_data or armature_obj.animation_data_create()
+    _restore_bone_flags(armature_obj, flags)
+    anim_data.action = action
+    _assign_action_slot(anim_data, pose_slot)
+    context.view_layer.update()
+
+    samples = {}
+    for frame in frames:
+        _set_pose_to_rest(armature_obj)
+        context.scene.frame_set(frame)
+        context.view_layer.update()
+        samples[frame] = {
+            pose_bone.name: pose_bone.matrix.copy()
+            for pose_bone in armature_obj.pose.bones
+        }
+    return samples
+
+
+def _max_game_semantics_translation_error(context, armature_obj, action, pose_slot, frames, flags, source_samples):
+    anim_data = armature_obj.animation_data or armature_obj.animation_data_create()
+    _restore_bone_flags(armature_obj, flags, force_game_location=True)
+    anim_data.action = action
+    _assign_action_slot(anim_data, pose_slot)
+    context.view_layer.update()
+
+    max_error = 0.0
+    max_bone = None
+    max_frame = None
+    for frame in frames:
+        _set_pose_to_rest(armature_obj)
+        context.scene.frame_set(frame)
+        context.view_layer.update()
+        frame_samples = source_samples[frame]
+        for pose_bone in armature_obj.pose.bones:
+            source_matrix = frame_samples.get(pose_bone.name)
+            if source_matrix is None:
+                continue
+            error = (pose_bone.matrix.translation - source_matrix.translation).length
+            if error > max_error:
+                max_error = error
+                max_bone = pose_bone.name
+                max_frame = frame
+    return max_error, max_bone, max_frame
+
+
+def _basis_tracks_for_game_semantics(context, armature_obj, frames, flags, source_samples, depth_groups):
+    _restore_bone_flags(armature_obj, flags, force_game_location=True)
+    anim_data = armature_obj.animation_data or armature_obj.animation_data_create()
+    anim_data.action = None
+    context.view_layer.update()
+
+    tracks = {pose_bone.name: {} for pose_bone in armature_obj.pose.bones}
+    for frame in frames:
+        _set_pose_to_rest(armature_obj)
+        context.view_layer.update()
+        frame_samples = source_samples[frame]
+        for depth_group in depth_groups:
+            assigned = []
+            for bone in depth_group:
+                pose_bone = armature_obj.pose.bones.get(bone.name)
+                if pose_bone is None or bone.name not in frame_samples:
+                    continue
+                pose_bone.matrix = frame_samples[bone.name]
+                assigned.append(pose_bone)
+            context.view_layer.update()
+            for pose_bone in assigned:
+                tracks[pose_bone.name][frame] = pose_bone.matrix_basis.copy()
+    return tracks
+
+
+def _bake_actions_to_game_location_semantics(context, armature_obj, actions):
+    """Bake only NC actions that diverge under DSTS bone-location semantics.
+
+    Blender's glTF importer authors actions for ``use_local_location=True``.
+    Native DSTS armatures evaluate pose locations with that flag disabled. Most
+    NC clips survive that difference, but models such as x133 visibly drift or
+    misplace weapons when the raw action is exported. For each action, sample the
+    correct visible pose, probe how far the raw action moves under DSTS flags,
+    and rewrite only clips whose bone translations meaningfully diverge.
+    """
+    bones = list(armature_obj.data.bones)
+    if not any(bone.use_local_location for bone in bones):
+        return 0, 0
+
+    anim_data = armature_obj.animation_data or armature_obj.animation_data_create()
+    previous_action = anim_data.action
+    previous_frame = context.scene.frame_current
+    previous_slot = getattr(anim_data, "action_slot", None)
+    original_flags = {
+        bone.name: (
+            bone.use_local_location,
+            bone.use_inherit_rotation,
+            bone.inherit_scale,
+        )
+        for bone in bones
+    }
+    depth_groups = _bone_depth_groups(armature_obj)
+    threshold = 0.005
+
+    checked = 0
+    converted = 0
+    try:
+        for action in actions:
+            pose_slot, pose_fcurves = _pose_slot_and_fcurves(action)
+            if not pose_fcurves:
+                continue
+
+            frame_start, frame_end = _action_frame_span(action)
+            frames = list(range(frame_start, frame_end + 1))
+            if not frames:
+                continue
+
+            checked += 1
+            source_samples = _sample_action_pose_matrices(
+                context, armature_obj, action, pose_slot, frames, original_flags,
+            )
+            max_error, max_bone, max_frame = _max_game_semantics_translation_error(
+                context, armature_obj, action, pose_slot, frames, original_flags, source_samples,
+            )
+            if max_error <= threshold:
+                _log(
+                    f"  {action.name}: DSTS location probe OK "
+                    f"(max {max_error:.6f})"
+                )
+                continue
+
+            tracks = _basis_tracks_for_game_semantics(
+                context, armature_obj, frames, original_flags, source_samples, depth_groups,
+            )
+            write_pose_matrix_keys(action, armature_obj, pose_slot, tracks)
+            converted += 1
+            _log(
+                f"  {action.name}: baked DSTS location semantics "
+                f"(max raw drift {max_error:.6f} on {max_bone} frame {max_frame})"
+            )
+
+        _restore_bone_flags(armature_obj, original_flags, force_game_location=True)
+        _set_pose_to_rest(armature_obj)
+        context.view_layer.update()
+    finally:
+        anim_data.action = previous_action
+        if previous_slot is not None and hasattr(anim_data, "action_slot"):
+            try:
+                anim_data.action_slot = previous_slot
+            except Exception:
+                pass
+        context.scene.frame_set(previous_frame)
+        context.view_layer.update()
+
+    return converted, checked
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
@@ -1418,6 +1614,13 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             resampled = resample_pose_fcurves(action, frame_start, frame_end)
             _log(f"  {action.name}: rehomed root motion ({len(tracks)} bone track(s)), "
                  f"removed {removed} object F-Curve(s), resampled {resampled} pose F-Curve(s)")
+
+    converted, checked = _bake_actions_to_game_location_semantics(context, new_armature, imported_actions)
+    if checked:
+        _log(
+            f"DSTS location semantics probe checked {checked} action(s), "
+            f"baked {converted}"
+        )
 
     # --- rebuild NLA tracks on the new armature --------------------------
     from .blender_compat import create_nla_track

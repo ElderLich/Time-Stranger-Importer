@@ -76,6 +76,12 @@ Kept:
   tries Blender's normal glTF import path; if that rest pose fails but the raw
   glb node hierarchy fits the inverse bind matrices, it discards only that
   just-imported glb and retries with Blender's original-bind guessing disabled.
+- New Century / Unity-origin `.glb` import probes each action for Blender glTF
+  bone-location semantics that would drift under DSTS playback, then bakes only
+  the affected clips into DSTS/game semantics. This fixes models such as x133
+  whose idle can look grounded in Blender while exported `.anim` playback makes
+  feet hover or weapons offset in-game, without rewriting clips that already
+  evaluate the same way.
 - New Century / Unity-origin `.glb` import accepts tiny bind-pose discrepancies
   up to `0.01` Blender units before declaring that no axis-aligned conversion
   exists. This covers models such as `c112`, whose main rig is aligned but a few
