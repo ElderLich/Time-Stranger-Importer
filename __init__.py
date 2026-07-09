@@ -51,65 +51,6 @@ def _exportable_geom_collections():
     ]
 
 
-def _snapshot_blender_import_state():
-    """Capture datablocks so a cancelled import can remove only its own debris."""
-    return {
-        "objects": set(bpy.data.objects),
-        "actions": set(bpy.data.actions),
-        "collections": set(bpy.data.collections),
-        "meshes": set(bpy.data.meshes),
-        "armatures": set(bpy.data.armatures),
-        "materials": set(bpy.data.materials),
-        "images": set(bpy.data.images),
-        "node_groups": set(bpy.data.node_groups),
-        "scene_fps": bpy.context.scene.render.fps,
-        "scene_fps_base": bpy.context.scene.render.fps_base,
-    }
-
-
-def _cleanup_failed_import_state(snapshot):
-    """Remove newly-created datablocks after a failed import.
-
-    Blender's native glTF importer creates its raw hierarchy before the NC
-    conversion can validate the bind pose. If validation fails, clean those
-    temporary objects so the scene does not look like a broken finished import.
-    """
-    for obj in [o for o in bpy.data.objects if o not in snapshot["objects"]]:
-        try:
-            bpy.data.objects.remove(obj, do_unlink=True)
-        except (ReferenceError, RuntimeError):
-            pass
-
-    for collection in [col for col in bpy.data.collections if col not in snapshot["collections"]]:
-        try:
-            bpy.data.collections.remove(collection, do_unlink=True)
-        except TypeError:
-            try:
-                bpy.data.collections.remove(collection)
-            except (ReferenceError, RuntimeError):
-                pass
-        except (ReferenceError, RuntimeError):
-            pass
-
-    cleanup_order = (
-        ("actions", bpy.data.actions),
-        ("meshes", bpy.data.meshes),
-        ("armatures", bpy.data.armatures),
-        ("materials", bpy.data.materials),
-        ("images", bpy.data.images),
-        ("node_groups", bpy.data.node_groups),
-    )
-    for key, datablocks in cleanup_order:
-        for datablock in [block for block in datablocks if block not in snapshot[key] and block.users == 0]:
-            try:
-                datablocks.remove(datablock)
-            except (ReferenceError, RuntimeError):
-                pass
-
-    bpy.context.scene.render.fps = snapshot["scene_fps"]
-    bpy.context.scene.render.fps_base = snapshot["scene_fps_base"]
-
-
 def _active_geom_collection(context):
     active = getattr(context, "object", None)
     if active:
@@ -1339,7 +1280,6 @@ class DSTS_OT_NcGlbImport(Operator, ImportHelper):
     def execute(self, context):
         from .src.nc_glb import import_nc_model
 
-        import_snapshot = _snapshot_blender_import_state()
         try:
             donor_path = _resolve_donor_geom_path(self.extracted_root, self.donor_chr, self.donor_geom_path)
             collection, armature, notes = import_nc_model(
@@ -1349,7 +1289,6 @@ class DSTS_OT_NcGlbImport(Operator, ImportHelper):
             print(f"[DSTS] NC glb import failed: {exc}")
             import traceback
             traceback.print_exc()
-            _cleanup_failed_import_state(import_snapshot)
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 
