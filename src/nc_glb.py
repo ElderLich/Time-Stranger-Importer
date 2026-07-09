@@ -835,6 +835,132 @@ def write_pose_matrix_keys(action, armature_obj, pose_slot, tracks):
     anim_data.action = previous_action
 
 
+def _assign_action_slot(anim_data, pose_slot):
+    if pose_slot is not None and hasattr(anim_data, "action_slot"):
+        try:
+            anim_data.action_slot = pose_slot
+        except Exception as exc:  # pragma: no cover - defensive
+            _log(f"could not assign action slot: {exc}")
+
+
+def _set_pose_to_rest(armature_obj):
+    for pose_bone in armature_obj.pose.bones:
+        pose_bone.location = (0.0, 0.0, 0.0)
+        pose_bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pose_bone.rotation_euler = (0.0, 0.0, 0.0)
+        pose_bone.scale = (1.0, 1.0, 1.0)
+
+
+def _bake_actions_to_game_location_semantics(context, armature_obj, actions):
+    """Bake NC actions from glTF local-location semantics to DSTS semantics.
+
+    Blender's glTF importer sets bones to ``use_local_location=True``. Native
+    DSTS geom imports set it to False, and TS .anim playback follows that
+    behaviour. If we export the raw glTF pose-channel location keys, Blender can
+    look correct while the game evaluates prop/root bones in a different space.
+    This samples the visible NC pose, switches the export rig to the DSTS
+    setting, and rekeys equivalent basis transforms.
+    """
+    bones = list(armature_obj.data.bones)
+    if not any(bone.use_local_location for bone in bones):
+        return 0
+
+    anim_data = armature_obj.animation_data or armature_obj.animation_data_create()
+    previous_action = anim_data.action
+    previous_frame = context.scene.frame_current
+    previous_slot = getattr(anim_data, "action_slot", None)
+    original_flags = {
+        bone.name: (
+            bone.use_local_location,
+            bone.use_inherit_rotation,
+            bone.inherit_scale,
+        )
+        for bone in bones
+    }
+    depth_groups = []
+    for bone in bones:
+        depth = 0
+        parent = bone.parent
+        while parent is not None:
+            depth += 1
+            parent = parent.parent
+        while len(depth_groups) <= depth:
+            depth_groups.append([])
+        depth_groups[depth].append(bone)
+
+    converted = 0
+    try:
+        for action in actions:
+            pose_slot, pose_fcurves = _pose_slot_and_fcurves(action)
+            if not pose_fcurves:
+                continue
+
+            # Evaluate the source action with the glTF importer's bone flags.
+            for bone in bones:
+                local_location, inherit_rotation, inherit_scale = original_flags[bone.name]
+                bone.use_local_location = local_location
+                bone.use_inherit_rotation = inherit_rotation
+                bone.inherit_scale = inherit_scale
+            anim_data.action = action
+            _assign_action_slot(anim_data, pose_slot)
+
+            frame_start, frame_end = _action_frame_span(action)
+            frames = list(range(frame_start, frame_end + 1))
+            sampled_pose = {}
+            for frame in frames:
+                context.scene.frame_set(frame)
+                context.view_layer.update()
+                sampled_pose[frame] = {
+                    pose_bone.name: pose_bone.matrix.copy()
+                    for pose_bone in armature_obj.pose.bones
+                }
+
+            # Compute basis matrices that reproduce those poses with DSTS flags.
+            anim_data.action = None
+            for bone in bones:
+                bone.use_local_location = False
+                bone.use_inherit_rotation = original_flags[bone.name][1]
+                bone.inherit_scale = original_flags[bone.name][2]
+
+            tracks = {bone.name: {} for bone in bones}
+            for frame in frames:
+                _set_pose_to_rest(armature_obj)
+                context.view_layer.update()
+                # Parent depth must be evaluated before child matrices are set,
+                # but siblings can be assigned in one batch.
+                for depth_group in depth_groups:
+                    assigned = []
+                    for bone in depth_group:
+                        pose_bone = armature_obj.pose.bones.get(bone.name)
+                        if pose_bone is not None:
+                            pose_bone.matrix = sampled_pose[frame][bone.name]
+                            assigned.append((bone.name, pose_bone))
+                    context.view_layer.update()
+                    for bone_name, pose_bone in assigned:
+                        tracks[bone_name][frame] = pose_bone.matrix_basis.copy()
+
+            write_pose_matrix_keys(action, armature_obj, pose_slot, tracks)
+            converted += 1
+
+        for bone in bones:
+            bone.use_local_location = False
+            bone.use_inherit_rotation = original_flags[bone.name][1]
+            bone.inherit_scale = original_flags[bone.name][2]
+        _set_pose_to_rest(armature_obj)
+        context.view_layer.update()
+    finally:
+        anim_data.action = previous_action
+        if previous_slot is not None and hasattr(anim_data, "action_slot"):
+            try:
+                anim_data.action_slot = previous_slot
+            except Exception:
+                pass
+        context.scene.frame_set(previous_frame)
+        context.view_layer.update()
+
+    return converted
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
@@ -1418,6 +1544,10 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             resampled = resample_pose_fcurves(action, frame_start, frame_end)
             _log(f"  {action.name}: rehomed root motion ({len(tracks)} bone track(s)), "
                  f"removed {removed} object F-Curve(s), resampled {resampled} pose F-Curve(s)")
+
+    converted = _bake_actions_to_game_location_semantics(context, new_armature, imported_actions)
+    if converted:
+        _log(f"converted {converted} action(s) to DSTS/game local-location semantics")
 
     # --- rebuild NLA tracks on the new armature --------------------------
     from .blender_compat import create_nla_track
