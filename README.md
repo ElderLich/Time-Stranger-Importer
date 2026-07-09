@@ -114,6 +114,11 @@ Kept:
   texture retargeting uses that hint before falling back, so multi-material
   models such as BeelStarmon X keep wings/capes/accessories on their generated
   atlas instead of collapsing every material to `a01`.
+- The NC Moveset exporter writes target-stem Time Stranger names such as
+  `chr549_ba01.anim`, expands the battle/field code list, can concatenate NC
+  multi-part clips such as `skill2_move_to + skill2_display + skill2_move_back`
+  into `bs02`, and uses local NC aliases such as `idle`, `stand`, or `hurt` for
+  missing field/guard slots.
 
 Removed from the active addon:
 

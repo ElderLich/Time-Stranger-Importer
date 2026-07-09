@@ -1335,24 +1335,8 @@ def fetch_nla_tracks(self, context):
     return tuple(track_list) if track_list else (("NONE", "No Active Tracks", "", "ERROR", 0),)
 
 
-def _build_anim_action_and_nla(armature_obj, anim_name, anim_data, bone_names, replace_existing=False):
-    """Build a pose action from parsed .anim data and push it as an NLA track.
-
-    Single source of truth shared by the .anim import operator and the one-click
-    "Import Donor Animations" button. Retargets by bone order (anim bone_idx →
-    armature.data.bones[bone_idx]). When replace_existing is True, an NLA track of
-    the same name (and its now-orphaned action) is removed FIRST so re-running does
-    not stack duplicate tracks or leave the new action auto-suffixed ".001".
-    """
-    if replace_existing and armature_obj.animation_data:
-        for track in list(armature_obj.animation_data.nla_tracks):
-            if track.name == anim_name:
-                strip_actions = [s.action for s in track.strips if s.action]
-                armature_obj.animation_data.nla_tracks.remove(track)
-                for old_action in strip_actions:
-                    if old_action.users == 0:
-                        bpy.data.actions.remove(old_action)
-
+def _build_anim_action_from_data(armature_obj, anim_name, anim_data, bone_names):
+    """Build a pose action from parsed .anim data without creating an NLA track."""
     action = bpy.data.actions.new(anim_name)
     fps = 1
 
@@ -1400,6 +1384,28 @@ def _build_anim_action_and_nla(armature_obj, anim_name, anim_data, bone_names, r
                         kf = fc.keyframe_points.insert(float(fps * frame + 1), scl[scale_idx])
                         kf.interpolation = 'LINEAR'
 
+    return action
+
+
+def _build_anim_action_and_nla(armature_obj, anim_name, anim_data, bone_names, replace_existing=False):
+    """Build a pose action from parsed .anim data and push it as an NLA track.
+
+    Single source of truth shared by the .anim import operator and the one-click
+    "Import Donor Animations" button. Retargets by bone order (anim bone_idx →
+    armature.data.bones[bone_idx]). When replace_existing is True, an NLA track of
+    the same name (and its now-orphaned action) is removed FIRST so re-running does
+    not stack duplicate tracks or leave the new action auto-suffixed ".001".
+    """
+    if replace_existing and armature_obj.animation_data:
+        for track in list(armature_obj.animation_data.nla_tracks):
+            if track.name == anim_name:
+                strip_actions = [s.action for s in track.strips if s.action]
+                armature_obj.animation_data.nla_tracks.remove(track)
+                for old_action in strip_actions:
+                    if old_action.users == 0:
+                        bpy.data.actions.remove(old_action)
+
+    action = _build_anim_action_from_data(armature_obj, anim_name, anim_data, bone_names)
     start_frame = int(action.frame_range[0]) if action.frame_range[0] > 0 else 1
     scale = 24.0 / anim_data.playback_rate if anim_data.playback_rate > 0 else 1.0
     # (Any pre-existing same-named track was already removed at the top when
@@ -1501,7 +1507,6 @@ class DSTS_OT_ImportDonorAnimations(Operator):
         description="Remove an NLA track of the same clip name before importing so re-running does not stack duplicates",
         default=True,
     )
-
     def invoke(self, context, event):
         collection = _active_geom_collection(context)
         if collection:
@@ -1714,25 +1719,188 @@ def _build_rest_pose_anim_file(armature_obj, playback_rate=30.0):
             bpy.data.actions.remove(action)
 
 
-# NC clip name -> TS animation code. Per TS slot conventions:
-# bn01 idle, bn02 secondary idle, br01 run/move, bd01 hurt, bv01 victory,
-# ba01/ba02 attacks, bs01/bs02 skills, e001 evolution.
+# NC clip/action aliases -> TS animation code. TS-coded target tracks such as
+# chr549_bg01 are accepted; other chr-prefixed tracks are ignored.
 _NC_MOVESET_MAP = (
-    ("bn01", ("idle",)),
-    ("bn02", ("stand", "tongyong")),
-    ("br01", ("move2", "move")),
-    ("bd01", ("hurt",)),
-    ("bv01", ("win", "win2")),
-    ("ba01", ("attack_move", "attack1_move_to")),
-    ("ba02", ("attack", "attack_move_to", "attack1_move_to")),
-    ("bs01", ("skill1", "skill1_move_to", "skill1_move_back")),
-    ("bs02", ("skill2_move_to", "skill2_display")),
-    ("e001", ("evolution2", "evolution")),
+    ("ba01", ("attack_move", "attack1_move_to", "ba01")),
+    ("ba02", ("attack", "attack_move_to", "attack1_move_to", "ba02")),
+    ("bs01", ("skill1", "skill1_move_to", "skill1_move_back", "bs01")),
+    ("bs02", ("skill2_move_to", "skill2_display", "skill2_move_back", "bs02")),
+    ("bd01", ("hurt", "bd01")),
+    ("bd02", ("bd02", "hurt")),
+    ("bd03", ("bd03", "stand", "idle", "bn01")),
+    ("bg01", ("guard", "bg01", "stand", "idle", "bn01")),
+    ("bn01", ("idle", "bn01")),
+    ("br01", ("move2", "move", "br01")),
+    ("bv01", ("win", "win2", "bv01")),
+    ("fn01_01", ("fn01_01", "field_idle", "idle", "bn01")),
+    ("fw01_01", ("fw01_01", "field_walk", "move2", "move", "br01")),
+    ("fr01_01b", ("fr01_01b", "field_run", "move2", "move", "br01")),
+    ("fe01", ("fe01", "idle", "bn01")),
+    ("fe02", ("fe02", "idle", "bn01")),
+    ("fe03", ("fe03", "stand", "idle", "bn01")),
+    ("fe04", ("fe04", "idle", "bn01")),
+    ("fq01", ("fq01", "idle", "bn01")),
+    ("fq02", ("fq02", "idle", "bn01")),
+    ("bn02", ("stand", "tongyong", "sleep", "sleeping", "bn02")),
+    ("e001", ("evolution2", "evolution", "e001")),
 )
+_NC_MOVESET_CODE_ORDER = tuple(code for code, _aliases in _NC_MOVESET_MAP)
+_NC_MOVESET_SEQUENCE_MAP = {
+    "bs02": (
+        ("skill2_move_to",),
+        ("skill2_display",),
+        ("skill2_move_back",),
+    ),
+}
+_TS_MOVESET_CODES = frozenset(
+    _NC_MOVESET_CODE_ORDER
+    + ("bf01", "bg02", "e001")
+)
+_SKIP_TS_MOVESET_CODES = frozenset(("lod_2",))
+_SEQUENCE_OBJECT_TRANSFORM_PATHS = frozenset((
+    "location",
+    "rotation_quaternion",
+    "rotation_euler",
+    "rotation_axis_angle",
+    "scale",
+    "delta_location",
+    "delta_rotation_euler",
+    "delta_rotation_quaternion",
+    "delta_scale",
+))
+
+
+def _track_name_moveset_parts(track_name):
+    stem = os.path.splitext(str(track_name or "").strip())[0].lower()
+    if not stem:
+        return "", ""
+    if stem in _SKIP_TS_MOVESET_CODES or stem.endswith("_lod_2"):
+        return "", ""
+    if re.fullmatch(r"chr\d+loc(?:_.*)?", stem):
+        return "", ""
+    prefix = ""
+    match = re.fullmatch(r"chr\d+_(.+)", stem)
+    if match:
+        prefix = stem[:stem.find("_")]
+        stem = match.group(1)
+    if stem in _TS_MOVESET_CODES and stem not in _SKIP_TS_MOVESET_CODES:
+        return prefix, stem
+    ride_match = re.fullmatch(r"r\d+_(fn01|fw01)", stem)
+    if ride_match:
+        return prefix, stem
+    return "", ""
+
+
+def _track_name_to_moveset_code(track_name):
+    _prefix, code = _track_name_moveset_parts(track_name)
+    return code
+
+
+def _candidate_track_names_for_code(ts_code, target_stem=""):
+    names = []
+    for code, aliases in _NC_MOVESET_MAP:
+        if code == ts_code:
+            names.extend(aliases)
+            break
+    names.append(ts_code)
+    if target_stem:
+        names.append(f"{target_stem}_{ts_code}")
+    return tuple(dict.fromkeys(name for name in names if name))
+
+
+def _find_track_by_names(tracks, names):
+    return next((tracks[name.lower()] for name in names if name.lower() in tracks), None)
+
+
+def _export_action_as_anim(armature_obj, action, strip, filepath):
+    playback_rate = 24.0 / strip.scale if strip and strip.scale > 0 else 30.0
+    anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
+    anim_file.to_file(filepath)
+
+
+def _build_sequence_action_from_tracks(armature_obj, name, tracks):
+    action = bpy.data.actions.new(name)
+    current_frame = 0.0
+    copied_curves = 0
+    playback_rates = []
+
+    for track in tracks:
+        strip = track.strips[0] if track and track.strips else None
+        source_action = strip.action if strip else None
+        if source_action is None:
+            continue
+        playback_rates.append(24.0 / strip.scale if strip.scale > 0 else 30.0)
+        start = float(source_action.frame_range[0])
+        end = float(source_action.frame_range[1])
+        for source_fc in iter_action_fcurves(source_action):
+            data_path = getattr(source_fc, "data_path", "")
+            if not (
+                data_path.startswith("pose.bones")
+                or data_path in _SEQUENCE_OBJECT_TRANSFORM_PATHS
+            ):
+                continue
+            array_index = int(getattr(source_fc, "array_index", 0))
+            group_name = getattr(getattr(source_fc, "group", None), "name", "") or ""
+            dest_fc = create_action_fcurve(
+                action,
+                armature_obj,
+                data_path=data_path,
+                index=array_index,
+                group_name=group_name,
+            )
+            for keyframe in getattr(source_fc, "keyframe_points", []):
+                frame = current_frame + (float(keyframe.co.x) - start)
+                key = dest_fc.keyframe_points.insert(frame, float(keyframe.co.y), options={'FAST'})
+                key.interpolation = getattr(keyframe, "interpolation", "LINEAR")
+            dest_fc.update()
+            copied_curves += 1
+        current_frame += max(1.0, end - start + 1.0)
+
+    if copied_curves == 0:
+        if action.users == 0:
+            bpy.data.actions.remove(action)
+        raise RuntimeError(f"No supported transform curves found for sequence {name}")
+    playback_rate = playback_rates[0] if playback_rates else 30.0
+    if any(abs(rate - playback_rate) > 1e-4 for rate in playback_rates[1:]):
+        print(
+            f"[DSTS] Warning: sequence {name} uses mixed playback rates "
+            f"{[round(rate, 4) for rate in playback_rates]}; using {playback_rate:.4f}"
+        )
+    return action, playback_rate
+
+
+def _try_export_sequence(armature_obj, tracks, ts_code, output_code, target_stem, directory):
+    sequences = _NC_MOVESET_SEQUENCE_MAP.get(ts_code)
+    if not sequences:
+        return None
+    sequence_tracks = []
+    for aliases in sequences:
+        track = _find_track_by_names(tracks, aliases)
+        if track is None:
+            return None
+        sequence_tracks.append(track)
+
+    action, playback_rate = _build_sequence_action_from_tracks(
+        armature_obj,
+        f"{target_stem}_{output_code}_sequence_export",
+        sequence_tracks,
+    )
+    try:
+        filepath = os.path.join(directory, f"{target_stem}_{output_code}.anim")
+        anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
+        anim_file.to_file(filepath)
+        return "+".join(track.name for track in sequence_tracks)
+    finally:
+        anim_data = armature_obj.animation_data
+        if anim_data and anim_data.action == action:
+            anim_data.action = None
+        if action.users == 0:
+            bpy.data.actions.remove(action)
 
 
 class DSTS_OT_ExportNcMoveset(Operator):
-    """Export the NC animation set as TS-named .anim files (idle -> bn01, move2 -> br01, ...)"""
+    """Export NC animation clips as target-stem TS .anim files"""
     bl_idname = "export_scene.dsts_nc_moveset"
     bl_label = "Digimon Time Stranger Export NC Moveset"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1744,7 +1912,6 @@ class DSTS_OT_ExportNcMoveset(Operator):
         description="Target character stem used for the exported file names, for example chr110",
         default="chr110",
     )
-
     def invoke(self, context, event):
         collection = _active_geom_collection(context)
         stem = _target_chr_from_context(context, collection, "")
@@ -1772,8 +1939,18 @@ class DSTS_OT_ExportNcMoveset(Operator):
             self.report({'ERROR'}, "Armature has no NLA tracks (import an NC model first)")
             return {'CANCELLED'}
 
-        tracks = {track.name: track for track in armature_obj.animation_data.nla_tracks if track.strips}
-        target_stem, _num = _normalize_chr_stem(self.target_chr)
+        target_stem, target_num = _normalize_chr_stem(self.target_chr)
+
+        tracks = {track.name.lower(): track for track in armature_obj.animation_data.nla_tracks if track.strips}
+        tracks_by_code = {}
+        for track in armature_obj.animation_data.nla_tracks:
+            if not track.strips:
+                continue
+            prefix, code = _track_name_moveset_parts(track.name)
+            if prefix and prefix != target_stem:
+                continue
+            if code and code not in tracks_by_code:
+                tracks_by_code[code] = track
 
         exported = []
         missing = []
@@ -1787,25 +1964,53 @@ class DSTS_OT_ExportNcMoveset(Operator):
             print(f"[DSTS] Failed to export base rest animation {target_stem}.anim: {exc}")
             missing.append("base")
 
-        for ts_code, candidates in _NC_MOVESET_MAP:
-            track = next((tracks[name] for name in candidates if name in tracks), None)
-            if track is None:
-                missing.append(ts_code)
+        export_codes = list(_NC_MOVESET_CODE_ORDER)
+        for code in tracks_by_code:
+            if code not in export_codes:
+                export_codes.append(code)
+
+        for ts_code in export_codes:
+            output_code = ts_code
+            ride_match = re.fullmatch(r"r\d+_(fn01|fw01)", ts_code)
+            if ride_match and target_num:
+                output_code = f"r{target_num:03d}_{ride_match.group(1)}"
+
+            try:
+                sequence_source = _try_export_sequence(
+                    armature_obj,
+                    tracks,
+                    ts_code,
+                    output_code,
+                    target_stem,
+                    self.directory,
+                )
+            except Exception as exc:
+                print(f"[DSTS] Failed to export sequence {output_code}: {exc}")
+                sequence_source = None
+            if sequence_source:
+                exported.append(f"{output_code}<-{sequence_source}")
                 continue
+
+            candidates = _candidate_track_names_for_code(ts_code, target_stem=target_stem)
+            track = tracks_by_code.get(ts_code)
+            if track is None:
+                track = _find_track_by_names(tracks, candidates)
+            if track is None:
+                missing.append(output_code)
+                continue
+
             strip = track.strips[0]
             action = strip.action
             if not action:
-                missing.append(ts_code)
+                missing.append(output_code)
                 continue
-            playback_rate = 24.0 / strip.scale if strip.scale > 0 else 30.0
-            anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
-            filepath = os.path.join(self.directory, f"{target_stem}_{ts_code}.anim")
+            filepath = os.path.join(self.directory, f"{target_stem}_{output_code}.anim")
             try:
-                anim_file.to_file(filepath)
-                exported.append(f"{ts_code}<-{track.name}")
+                _export_action_as_anim(armature_obj, action, strip, filepath)
+                exported.append(f"{output_code}<-{track.name}")
             except Exception as exc:
-                print(f"[DSTS] Failed to export {ts_code} from {track.name}: {exc}")
-                missing.append(ts_code)
+                print(f"[DSTS] Failed to export {output_code} from {track.name}: {exc}")
+                missing.append(output_code)
 
         if not exported:
             self.report({'ERROR'}, "No NC clips matched the moveset mapping")
