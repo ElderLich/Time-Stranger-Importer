@@ -851,19 +851,58 @@ def _set_pose_to_rest(armature_obj):
         pose_bone.scale = (1.0, 1.0, 1.0)
 
 
+def _game_location_semantics_target_bones(armature_obj):
+    """Root-level NC prop bones need DSTS-style location channels.
+
+    x133 showed that converting the whole body hierarchy can make the game
+    evaluate Bip001/body motion incorrectly, while the original issue was on
+    root-level accessory/weapon bones. Target only non-body children of the
+    export root and leave the Bip001 body chain authored as-is.
+    """
+    bones = list(armature_obj.data.bones)
+    root_bones = [bone for bone in bones if bone.parent is None]
+    if len(root_bones) != 1:
+        return []
+    root = root_bones[0]
+    body_root_names = {"bip001"}
+    root_name = _base_name(root.name).strip().lower()
+    if root_name in body_root_names:
+        return []
+    direct_children = [bone for bone in bones if bone.parent == root]
+    if not any(_base_name(bone.name).strip().lower() in body_root_names for bone in direct_children):
+        return []
+    targets = [
+        bone for bone in direct_children
+        if _base_name(bone.name).strip().lower() not in body_root_names
+    ]
+    return targets
+
+
 def _bake_actions_to_game_location_semantics(context, armature_obj, actions):
-    """Bake NC actions from glTF local-location semantics to DSTS semantics.
+    """Bake NC root-accessory actions from glTF semantics to DSTS semantics.
 
     Blender's glTF importer sets bones to ``use_local_location=True``. Native
     DSTS geom imports set it to False, and TS .anim playback follows that
-    behaviour. If we export the raw glTF pose-channel location keys, Blender can
-    look correct while the game evaluates prop/root bones in a different space.
-    This samples the visible NC pose, switches the export rig to the DSTS
-    setting, and rekeys equivalent basis transforms.
+    behaviour. Some NC prop/weapon bones are direct children of the root, and
+    exporting their raw glTF pose-channel location keys makes Blender look
+    correct while the game evaluates them in a different space.
+
+    Do not convert the whole armature: the Bip001 body hierarchy is authored in
+    the NC channel space and was already game-stable on x133. This samples the
+    visible NC pose, switches only root-level accessory bones to the DSTS
+    setting, and rekeys equivalent basis transforms for those bones.
     """
     bones = list(armature_obj.data.bones)
     if not any(bone.use_local_location for bone in bones):
         return 0
+    target_bones = _game_location_semantics_target_bones(armature_obj)
+    if not target_bones:
+        return 0
+    target_names = {bone.name for bone in target_bones}
+    _log(
+        "converting root accessory location semantics for "
+        + ", ".join(bone.name for bone in target_bones)
+    )
 
     anim_data = armature_obj.animation_data or armature_obj.animation_data_create()
     previous_action = anim_data.action
@@ -918,11 +957,11 @@ def _bake_actions_to_game_location_semantics(context, armature_obj, actions):
             # Compute basis matrices that reproduce those poses with DSTS flags.
             anim_data.action = None
             for bone in bones:
-                bone.use_local_location = False
+                bone.use_local_location = False if bone.name in target_names else original_flags[bone.name][0]
                 bone.use_inherit_rotation = original_flags[bone.name][1]
                 bone.inherit_scale = original_flags[bone.name][2]
 
-            tracks = {bone.name: {} for bone in bones}
+            tracks = {bone.name: {} for bone in target_bones}
             for frame in frames:
                 _set_pose_to_rest(armature_obj)
                 context.view_layer.update()
@@ -934,7 +973,8 @@ def _bake_actions_to_game_location_semantics(context, armature_obj, actions):
                         pose_bone = armature_obj.pose.bones.get(bone.name)
                         if pose_bone is not None:
                             pose_bone.matrix = sampled_pose[frame][bone.name]
-                            assigned.append((bone.name, pose_bone))
+                            if bone.name in target_names:
+                                assigned.append((bone.name, pose_bone))
                     context.view_layer.update()
                     for bone_name, pose_bone in assigned:
                         tracks[bone_name][frame] = pose_bone.matrix_basis.copy()
@@ -943,7 +983,7 @@ def _bake_actions_to_game_location_semantics(context, armature_obj, actions):
             converted += 1
 
         for bone in bones:
-            bone.use_local_location = False
+            bone.use_local_location = False if bone.name in target_names else original_flags[bone.name][0]
             bone.use_inherit_rotation = original_flags[bone.name][1]
             bone.inherit_scale = original_flags[bone.name][2]
         _set_pose_to_rest(armature_obj)
