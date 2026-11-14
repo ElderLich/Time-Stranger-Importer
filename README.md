@@ -25,9 +25,10 @@ Python; the included build supports **CPython 3.13**. See
 
 ## Install
 
-1. Download `Time_Stranger_Importer.zip` from
-   [Releases](https://github.com/ElderLich/Time-Stranger-Importer/releases), or build
-   it with `python tools/package_addon.py`.
+1. Build this checkout with `python tools/package_addon.py` and use
+   `dist/Time_Stranger_Importer.zip`. Version 1.3 is currently a local build;
+   it has not been published to
+   [Releases](https://github.com/ElderLich/Time-Stranger-Importer/releases).
 2. In Blender, open **Edit → Preferences → Add-ons → Install from Disk** and
    select the ZIP. Enable **Time Stranger Importer**.
 3. Find **Digimon Time Stranger** under **File → Import/Export**, and the

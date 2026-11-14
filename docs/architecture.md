@@ -104,3 +104,50 @@ Game assets remain local.
 
 The smoke tests establish serializer and Blender behavior. In-game rendering,
 particle parity and optical-camera equivalence need separate game validation.
+
+## Reference comparison and audit coverage
+
+The local **Romstar** copy was inspected directly: its README/license,
+registration code, Time Stranger geometry importer, shared animation importer,
+DSCS camera binary record and Blender camera creation code. Despite its inherited
+"Import/Export" name and README, this particular copy has its export imports,
+classes and menu registration commented out, and no `BlenderIO/Export` directory.
+It supplies Time Stranger geometry and animation **import**, not an enabled TS
+animation export workflow. Its animation adapter hardcodes `24/playback_rate`,
+uses Bezier quaternion component curves, and receives float channels without
+constructing their curves. The new adapter replaces those behaviors and tests
+both import and export against native animation files.
+
+Romstar's DSCS camera record is 48 bytes and reads a projection integer at
+offset `0x18`; the inspected Time Stranger Lucemon camera record is 64 bytes and
+has a float value of 25.4 there. Its DSCS camera helper therefore cannot be used
+as a verified Time Stranger lens decoder. The Time Stranger import path does
+not call that camera helper. This is why native camera records remain preserved
+rather than being rewritten using the older layout.
+
+The **DSTS Unified** reference README and the **DSTS Formats Parser** C++ geometry,
+camera-header, skeleton and Python-binding code were inspected. The reference
+README identifies its older Blender 4.5.1/CPython 3.11 baseline. The compiled
+backend's camera/light writer limitation was confirmed directly in its source.
+The third-party **dsts-extractor** geometry reader and format/camera research
+notes were also consulted; those notes are evidence about their own observed
+files, not a replacement for the current parser's record layout.
+
+Material review covered image lookup, texture-reference names, donor metadata
+and vertex-layout retention, corner attributes/skin weights, and DDS output.
+Native chr050 and the Leviamon donor export were exercised. This was not an
+in-game pixel comparison of every shader/material family. The separate
+`dsts-viewer` checkout was inventoried, not independently audited in full.
+
+The video directory was inventoried. Existing contact sheets `contact_01.jpg`,
+`contact_04.jpg` and `contact_08.jpg` were visually inspected: they show the
+Nymic-derived donor geometry workflow, explicit `uv1` renaming, export dialogs
+and an in-game result. This was a representative frame review, **not** a full
+playthrough or transcription of all eight videos. The new workflow retains
+donor material metadata and the `uv1` contract; the full-length skills/tutorial
+videos were not independently reproduced step by step in this pass.
+
+Only installed Blender 5.1.2 and 5.3.0 were executed. Blender 5.0, 5.2, other
+platforms, alternative Python ABIs and future 5.x releases remain untested.
+No new GitHub release or installed add-on update was performed; the delivered
+ZIP was built from this repository.
