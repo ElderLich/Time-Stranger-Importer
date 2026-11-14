@@ -67,6 +67,15 @@ data ownership and testable conversion functions.
   clips matching the genuine chr050/chr395 base files. Native `0x140364070`
   initializes channels from GEOM; `0x1403A5B30` and `0x1403A65B0` replace keyed
   values rather than interpreting identity keys as the model's rest pose.
+- Motion translation now follows the native additive contract: parent-space
+  translation sums, quaternion products, and component-wise scale products.
+  Roots convert Blender Z-up location channels to native Y-up; bones with
+  local-location enabled also convert through their rest basis. Import applies
+  the inverse mapping. Object motion is composed as an absolute root pose before
+  recovering native deltas. Tests compare evaluated rotated Blender rigs with
+  independent native pose assembly, including both location modes. Older native
+  imports retain their stored vector convention when exporting saved actions;
+  reimport their ANIM files to update their Blender preview coordinates.
 - The updated geometry backend bounds binary reads and preserves camera, float,
   and parent-table records. A compact source bind-pose snapshot survives saved
   Blender scenes. Untouched bones retain exact source TRS and inverse bind

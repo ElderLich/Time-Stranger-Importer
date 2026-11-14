@@ -75,7 +75,7 @@ for component, points in ((0, [(1, 0), (3, 2)]), (1, [(2, 4)])):
     for frame, value in points:
         fc.keyframe_points.insert(frame, value).interpolation = 'LINEAR'
 sparse_result = build_from_action(arm, sparse)
-assert sparse_result.positions[0][1] == [1.0, 4.0, 0.0]
+assert all(abs(a-b)<1e-6 for a,b in zip(sparse_result.positions[0][1], [1.0, 0.0, -4.0]))
 
 # Owners in a layered action must remain isolated.
 other = bpy.data.objects.new("Unrelated", None)
@@ -94,7 +94,7 @@ assert sequence_rate == 60
 sequence_result = build_from_action(arm, sequence, sequence_rate)
 assert sequence_result.frame_count == 63, sequence_result.frame_count
 assert abs(sequence_result.positions[0][30][0] - 1.5) < 1e-5
-assert sequence_result.positions[0][60] == [0.0, 4.0, 0.0]
+assert all(abs(a-b)<1e-6 for a,b in zip(sequence_result.positions[0][60], [0.0, 0.0, -4.0]))
 assert math.isclose((sequence_result.frame_count - 1) / sequence_rate, 1 + 2 / 60)
 print('PASS mixed-rate sequence samples and missing-component reset')
 from Time_Stranger_Importer.src.animation import single_strip
@@ -185,6 +185,91 @@ with tempfile.TemporaryDirectory(prefix='dsts_srgb_') as folder:
     export_image_as_dds(linear, str(output))
     assert output.read_bytes()[128:132] == bytes([128, 128, 128, 255])
 print('PASS loaded PNG and float-buffer sRGB conversion')
+
+# Compare actual evaluated Blender poses to native component-wise motion
+# blending, including rotated root/child rest bases and both location modes.
+from mathutils import Matrix, Vector, Euler, Quaternion
+from Time_Stranger_Importer.src.skeleton import export_skeleton
+pose_rig = bpy.data.objects.new('Native coordinate test', bpy.data.armatures.new('Native coordinate test'))
+bpy.context.scene.collection.objects.link(pose_rig)
+bpy.context.view_layer.objects.active = pose_rig
+pose_rig.select_set(True)
+bpy.ops.object.mode_set(mode='EDIT')
+root = pose_rig.data.edit_bones.new('Rotated root')
+root.tail.y = 1
+root.matrix = Matrix.LocRotScale(Vector((.2,.3,.4)), Euler((.3,.1,.5)).to_quaternion(), Vector((1,1,1)))
+child = pose_rig.data.edit_bones.new('Rotated child')
+child.tail.y = 1
+child.parent = root
+child.matrix = root.matrix @ Matrix.LocRotScale(Vector((.3,.7,.2)), Euler((-.2,.6,.1)).to_quaternion(), Vector((1,1,1)))
+bpy.ops.object.mode_set(mode='OBJECT')
+pose_action = bpy.data.actions.new('Parent-space translation regression')
+for pb in pose_rig.pose.bones:
+    pb.rotation_mode = 'QUATERNION'
+    for component, value in enumerate((.1,.2,.3)):
+        create_action_fcurve(pose_action, pose_rig, pb.path_from_id()+'.location', component).keyframe_points.insert(1,value)
+    rotation = Euler((.2,-.4,.1)).to_quaternion()
+    for component, value in enumerate(rotation):
+        create_action_fcurve(pose_action, pose_rig, pb.path_from_id()+'.rotation_quaternion', component).keyframe_points.insert(1,value)
+native_rest = export_skeleton(pose_rig)
+native_axes = Matrix.Rotation(math.radians(-90),4,'X')
+for local_location in (True, False):
+    for bone in pose_rig.data.bones:
+        bone.use_local_location = local_location
+    pose_rig.animation_data.action = pose_action
+    bpy.context.scene.frame_set(1)
+    bpy.context.view_layer.update()
+    expected = {pb.name: native_axes @ pb.matrix for pb in pose_rig.pose.bones}
+    exported = build_from_action(pose_rig, pose_action)
+    worlds = {}
+    for i, bone in enumerate(native_rest.bones):
+        rest = bone.transform
+        position = Vector(rest.position[:3]) + Vector(exported.positions[i][0])
+        rq = Quaternion((rest.quaternion[3],*rest.quaternion[:3]))
+        q = exported.rotations[i][0]
+        world = Matrix.LocRotScale(position,rq @ Quaternion((q[3],*q[:3])),Vector(rest.scale[:3]))
+        if bone.parent:
+            world = worlds[bone.parent.name] @ world
+        worlds[bone.name] = world
+        assert max(abs(world[r][c]-expected[bone.name][r][c]) for r in range(4) for c in range(4)) < 1e-5
+    imported = build_action(pose_rig, 'Native coordinate reimport', exported)
+    pose_rig.animation_data.action = imported
+    bpy.context.scene.frame_set(1)
+    bpy.context.view_layer.update()
+    for pb in pose_rig.pose.bones:
+        world = native_axes @ pb.matrix
+        assert max(abs(world[r][c]-expected[pb.name][r][c]) for r in range(4) for c in range(4)) < 1e-5
+print('PASS native root axes and rotated local/parent-space bone translation in both directions')
+pose_rig.rotation_mode = 'XYZ'
+for path, values in [('location',(.2,.4,.6)),('rotation_euler',(.1,.2,.4))]:
+    for component, value in enumerate(values):
+        create_action_fcurve(pose_action,pose_rig,path,component).keyframe_points.insert(1,value)
+pose_rig.animation_data.action = pose_action
+bpy.context.scene.frame_set(1)
+bpy.context.view_layer.update()
+composed = addon.build_basic_hundred_line_anim_from_action(pose_rig,pose_action)
+worlds = {}
+for i, bone in enumerate(native_rest.bones):
+    rest=bone.transform
+    p=Vector(rest.position[:3])+Vector(composed.positions[i][0])
+    rq=Quaternion((rest.quaternion[3],*rest.quaternion[:3]))
+    q=composed.rotations[i][0]
+    world=Matrix.LocRotScale(p,rq@Quaternion((q[3],*q[:3])),Vector(composed.scales.get(i,{}).get(0,[1,1,1])))
+    if bone.parent:world=worlds[bone.parent.name]@world
+    worlds[bone.name]=world
+    expected=native_axes@pose_rig.matrix_world@pose_rig.pose.bones[bone.name].matrix
+    assert max(abs(world[r][c]-expected[r][c]) for r in range(4) for c in range(4))<1e-5
+print('PASS object rotation/translation composes onto a rotated native root')
+legacy = bpy.data.actions.new('Legacy native-vector action')
+legacy['DSTS_animation_metadata'] = '{}'
+for component,value in enumerate((1,2,3)):
+    create_action_fcurve(legacy,arm,arm.pose.bones[0].path_from_id()+'.location',component).keyframe_points.insert(1,value)
+assert build_from_action(arm,legacy).positions[0][0] == [1,2,3]
+legacy_track,_ = create_nla_track(arm,legacy,'Legacy native-vector track',1)
+legacy_sequence,rate = addon._build_sequence_action_from_tracks(arm,'Legacy normalized sequence',[legacy_track])
+legacy_output = build_from_action(arm,legacy_sequence,rate).positions[0][0]
+assert max(abs(a-b) for a,b in zip(legacy_output,(1,2,3)))<1e-6
+print('PASS legacy native-vector action export and sequence migration')
 
 from Time_Stranger_Importer.src.geom import import_geom, export_geom
 from Time_Stranger_Importer.src.mesh import export_mesh_object

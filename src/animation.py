@@ -4,10 +4,33 @@ import json
 import math
 
 import bpy
-from mathutils import Euler, Quaternion
+from mathutils import Euler, Quaternion, Matrix, Vector
 
 from .anim.InterfaceHundredLine import AnimFileHundredLine
 from .blender_compat import create_action_fcurve, iter_action_fcurves, scene_fps
+
+
+def location_to_native_matrix(bone):
+    """Blender location channels -> native parent-space additive translation.
+
+    Native motion blending adds translations component-wise. Blender's local
+    location option rotates the channel by the rest basis; roots additionally
+    cross the Blender Z-up / native Y-up boundary.
+    """
+    if bone.parent:
+        if not bone.use_local_location:
+            return Matrix.Identity(3)
+        return (bone.parent.matrix_local.inverted() @ bone.matrix_local).to_3x3()
+    axes = Matrix.Rotation(math.radians(-90), 3, 'X')
+    return axes @ bone.matrix_local.to_3x3() if bone.use_local_location else axes
+
+
+def legacy_native_locations(action):
+    """Old imported actions stored native vectors directly; preserve exports."""
+    if 'DSTS_animation_metadata' not in action:
+        return False
+    metadata = json.loads(action['DSTS_animation_metadata'])
+    return metadata.get('location_space') != 'blender-basis-v1'
 
 
 def _write_curve(action, owner, path, index, values, group):
@@ -59,6 +82,7 @@ def _build_action(owner, name, source, bone_names=None):
         "float_masks": list(source.float_channel_blend_factors),
         "float_count": source.float_channel_count,
         "unknown_section": list(source.unknown_section),
+        "location_space": "blender-basis-v1",
     })
     for index, name in enumerate(bone_names[:source.bone_count]):
         bone = owner.pose.bones[name]
@@ -67,6 +91,9 @@ def _build_action(owner, name, source, bone_names=None):
         for channel, data, count in (("location", source.positions, 3),
                                       ("scale", source.scales, 3)):
             values = data.get(index, {})
+            if channel == 'location' and values:
+                to_blender = location_to_native_matrix(bone.bone).inverted()
+                values = {f: to_blender @ Vector(v) for f, v in values.items()}
             if values:
                 for component in range(count):
                     _write_curve(action, owner, prefix + "." + channel, component,
@@ -130,6 +157,7 @@ def build_from_action(owner, action, playback_rate=30.0, slot=None, frame_range=
     curves = list(iter_action_fcurves(action, owner, slot))
     by_key = {(f.data_path, f.array_index): f for f in curves}
     metadata = json.loads(action.get("DSTS_animation_metadata", "{}"))
+    preserve_native_locations = legacy_native_locations(action)
     result = AnimFileHundredLine()
     bones = list(owner.data.bones)
     result.playback_rate = playback_rate
@@ -165,6 +193,9 @@ def build_from_action(owner, action, playback_rate=30.0, slot=None, frame_range=
                                            ("scale", result.scales, [1, 1, 1])):
             if has(prefix, channel):
                 target[index] = {i: vector(prefix, channel, defaults, f) for i, f in frames}
+                if channel == 'location' and not preserve_native_locations:
+                    to_native = location_to_native_matrix(bone)
+                    target[index] = {i: list(to_native @ Vector(v)) for i, v in target[index].items()}
         previous = None
         rotation = next((c for c in ("rotation_quaternion", "rotation_euler", "rotation_axis_angle")
                          if has(prefix, c)), None)

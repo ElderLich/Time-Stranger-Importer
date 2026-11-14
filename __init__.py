@@ -12,7 +12,7 @@ from pathlib import Path
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 from bpy.props import StringProperty, EnumProperty, BoolProperty, FloatProperty
 from bpy.types import Operator, Panel
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 from .src.blender_compat import create_action_fcurve, create_nla_track, iter_action_fcurves, scene_fps
 from .src.animation import single_strip, animation_path, validate_strip
 
@@ -903,16 +903,10 @@ def build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rat
 def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names, action_frame_start, slot=None):
     """Fold object-level animation of ``action`` into the root bone's tracks.
 
-    TS .anim files know nothing about object transforms: they store per-bone
-    deltas vs the geom rest (``local = rest_local @ T@R@S``). When the armature
-    object itself is animated (e.g. glTF imports fold an un-skinned root node's
-    motion onto the object), the equivalent root-bone delta is::
-
-        delta'(f) = rest_root^-1 @ O(f) @ rest_root @ T@R@S(delta(f))
-
-    where O(f) is the object's local basis matrix (identity object rest is
-    assumed - the .geom exporter enforces it). No-op when the action has no
-    non-identity object transform curves. Returns True when composed.
+    Native motion blending adds parent-space translations, multiplies rest and
+    delta quaternions, and multiplies scale components. Build that absolute root
+    pose in Blender axes, apply the object motion, then recover native deltas.
+    The geometry exporter requires identity object rest transforms.
     """
     from .src.nc_glb import (
         OBJECT_TRANSFORM_PATHS,
@@ -944,7 +938,9 @@ def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names
         return False
     root_idx = bone_names.index(root_bone.name)
     rest_root = root_bone.matrix_local.copy()
-    rest_root_inv = rest_root.inverted()
+    rest_position, rest_rotation, rest_scale = rest_root.decompose()
+    native_to_blender = Matrix.Rotation(math.radians(90), 3, 'X')
+    blender_to_native = native_to_blender.inverted()
 
     frames = range(anim_file.frame_count)
     obj_defaults = _channel_defaults(armature_obj)
@@ -964,14 +960,15 @@ def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names
         native_quat = anim_file.rotations[root_idx].get(frame_anim, [0, 0, 0, 1])
         old_quat = Quaternion((native_quat[3], *native_quat[:3]))
         old_scale = Vector(anim_file.scales[root_idx].get(frame_anim, [1, 1, 1]))
-        old_delta = (
-            Matrix.Translation(old_loc)
-            @ old_quat.to_matrix().to_4x4()
-            @ Matrix.Diagonal((*old_scale, 1.0))
-        )
-
-        new_delta = rest_root_inv @ object_world @ rest_root @ old_delta
-        loc, quat, scale = new_delta.decompose()
+        old_pose = Matrix.LocRotScale(
+            rest_position + native_to_blender @ old_loc,
+            rest_rotation @ old_quat,
+            Vector([rest_scale[i] * old_scale[i] for i in range(3)]))
+        new_pose = object_world @ old_pose
+        position, rotation, pose_scale = new_pose.decompose()
+        loc = blender_to_native @ (position - rest_position)
+        quat = rest_rotation.inverted() @ rotation
+        scale = Vector([pose_scale[i] / rest_scale[i] for i in range(3)])
         if previous_quat is not None and previous_quat.dot(quat) < 0.0:
             quat = -quat
         previous_quat = quat
@@ -1672,7 +1669,8 @@ def _export_action_as_anim(armature_obj, action, strip, filepath):
 
 def _build_sequence_action_from_tracks(armature_obj, name, tracks):
     import math
-    from .src.animation import _write_curve
+    from .src.animation import _write_curve, legacy_native_locations, location_to_native_matrix
+    location_bones = {pb.path_from_id() + '.location': pb.bone for pb in armature_obj.pose.bones}
     playback_rate = scene_fps(bpy.context.scene)
     sources, keys = [], set()
     for track in tracks:
@@ -1682,12 +1680,17 @@ def _build_sequence_action_from_tracks(armature_obj, name, tracks):
                   if fc.data_path.startswith('pose.bones') or fc.data_path in _SEQUENCE_OBJECT_TRANSFORM_PATHS
                   or fc.data_path.startswith('["DSTS_float_')}
         keys.update(curves)
-        sources.append((strip, curves))
+        legacy_locations = legacy_native_locations(strip.action)
+        if legacy_locations:
+            for path in location_bones:
+                if any((path, component) in curves for component in range(3)):
+                    keys.update((path, component) for component in range(3))
+        sources.append((strip, curves, legacy_locations))
     if not keys:
         raise RuntimeError(f"No supported transform curves found for sequence {name}")
     samples = {key: [] for key in keys}
     current_frame = 1
-    for strip, curves in sources:
+    for strip, curves, legacy_locations in sources:
         start, end = strip.action_frame_start, strip.action_frame_end
         source_rate = scene_fps(bpy.context.scene) / strip.scale
         count = max(1, math.ceil((end - start) * playback_rate / source_rate) + 1)
@@ -1697,6 +1700,10 @@ def _build_sequence_action_from_tracks(armature_obj, name, tracks):
             for i in range(count):
                 source_frame = min(end, start + i * source_rate / playback_rate)
                 value = curve.evaluate(source_frame) if curve else default
+                if legacy_locations and path in location_bones:
+                    native_value = Vector([curves[(path, i)].evaluate(source_frame)
+                                           if (path, i) in curves else 0.0 for i in range(3)])
+                    value = (location_to_native_matrix(location_bones[path]).inverted() @ native_value)[component]
                 samples[(path, component)].append((current_frame + i, value))
         current_frame += count - 1
     ad = armature_obj.animation_data or armature_obj.animation_data_create()
