@@ -3,7 +3,7 @@
 import bpy
 
 KINDS = ("objects", "collections", "meshes", "armatures", "actions", "materials",
-         "node_groups", "images", "cameras", "lights")
+         "node_groups", "images", "cameras", "lights", "sounds")
 
 
 def snapshot():

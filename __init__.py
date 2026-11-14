@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 3, 0),
+    "version": (1, 4, 0),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -1155,6 +1155,14 @@ class DSTS_OT_NcGlbImport(Operator, ImportHelper):
         description="Join a copy of the body meshes into an 'outline' mesh with the donor's MTR_line01 material and a white vertex color (required by the DSTS outline shader)",
         default=True,
     )
+    import_related_skills: BoolProperty(
+        name="Import Related Skill Scenes", default=False,
+        description="Discover captured cast/approach phases beside this model and import their source animations, available cameras and audio into separate scenes",
+    )
+    related_camera: BoolProperty(name="Related Cameras", default=True)
+    related_audio: BoolProperty(name="Related Audio", default=True)
+    related_effect_references: BoolProperty(name="Related Effect Timeline References", default=True,
+        description="Source effect records for inspection; Unity particles/shaders are not yet translated")
 
     def invoke(self, context, event):
         self.extracted_root = _scene_extracted_root(context)
@@ -1169,16 +1177,45 @@ class DSTS_OT_NcGlbImport(Operator, ImportHelper):
         layout.prop(self, "donor_geom_path")
         layout.prop(self, "extracted_root")
         layout.prop(self, "build_outline")
+        layout.prop(self, "import_related_skills")
+        if self.import_related_skills:
+            layout.prop(self, "related_camera")
+            layout.prop(self, "related_audio")
+            layout.prop(self, "related_effect_references")
+            layout.label(text="Cast/approach phases; cinematic is selected separately.")
 
     def execute(self, context):
         from .src.nc_glb import import_nc_model
+        from .src.scene_state import snapshot, rollback
 
+        before, old_scene, old_scenes = snapshot(), context.window.scene, set(bpy.data.scenes)
+        old_fps = (old_scene.render.fps, old_scene.render.fps_base)
+        old_model = old_scene.dsts_nc_model_path
+        old_active, old_selected = context.view_layer.objects.active, list(context.selected_objects)
         try:
+            if self.import_related_skills:
+                from .src.nc_skill_ui import catalog, primary_phases, import_related_skills
+                primary_phases(catalog(self.filepath))
             donor_path = _resolve_donor_geom_path(self.extracted_root, self.donor_chr, self.donor_geom_path)
             collection, armature, notes = import_nc_model(
                 context, self.filepath, donor_path, build_outline=self.build_outline
             )
+            context.scene.dsts_nc_model_path = str(Path(self.filepath).resolve())
+            if self.import_related_skills:
+                scenes = import_related_skills(context, self.filepath, import_camera=self.related_camera,
+                    import_audio=self.related_audio, import_effect_references=self.related_effect_references)
+                notes.append(f"Imported {len(scenes)} independent source skill scenes; effect records are not rendered")
         except Exception as exc:
+            context.window.scene = old_scene
+            for created in list(bpy.data.scenes):
+                if created not in old_scenes:
+                    bpy.data.scenes.remove(created)
+            rollback(before)
+            old_scene.render.fps, old_scene.render.fps_base = old_fps
+            old_scene.dsts_nc_model_path = old_model
+            for obj in old_selected:
+                obj.select_set(True)
+            context.view_layer.objects.active = old_active
             print(f"[DSTS] NC glb import failed: {exc}")
             import traceback
             traceback.print_exc()
@@ -2813,11 +2850,16 @@ class DSTS_OT_CinematicImport(Operator, ImportHelper):
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.cinematic.json;*.json", options={'HIDDEN'})
     import_actor: BoolProperty(name="Import Source Actor", default=True)
+    import_camera: BoolProperty(name="Import Captured Camera", default=True)
+    import_audio: BoolProperty(name="Import Audio", default=True)
+    import_effect_references: BoolProperty(name="Import Effect References", default=True)
 
     def execute(self, context):
         from .src.cinematic import import_preview
         try:
-            scene = import_preview(context, self.filepath, self.import_actor)
+            scene = import_preview(context, self.filepath, self.import_actor,
+                import_camera=self.import_camera, import_audio=self.import_audio,
+                import_effect_references=self.import_effect_references)
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
@@ -2872,7 +2914,9 @@ class DSTS_MT_ImportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_AnimImport.bl_idname, text="Animation (.anim)")
         layout.separator()
         layout.operator(DSTS_OT_NcGlbImport.bl_idname, text="New Century Model (.glb)")
+        layout.operator('import_scene.dsts_nc_skill', text="New Century Skill Phases (.glb)")
         layout.operator(DSTS_OT_CinematicImport.bl_idname, text="New Century Cinematic Preview (.json)")
+        layout.operator('import_scene.dsts_spark', text="Native Effect Graph (.sprk)")
 
 
 class DSTS_MT_ExportSubmenu(bpy.types.Menu):
@@ -2890,6 +2934,7 @@ class DSTS_MT_ExportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_ExportNcMoveset.bl_idname, text="NC Moveset (.anim)")
         layout.separator()
         layout.operator(DSTS_OT_PackageNativeModel.bl_idname, text="Package Exported Native Model (.geom)")
+        layout.operator('export_scene.dsts_spark', text="Native Effect Graph (.sprk)")
 
 
 def menu_func_import(self, context):
@@ -2934,6 +2979,9 @@ CLASSES = (
 
 
 def register():
+    from .src import native_effects, nc_skill_ui
+    native_effects.register()
+    nc_skill_ui.register()
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.dsts_extracted_root = StringProperty(
@@ -2998,6 +3046,9 @@ def unregister():
         bpy.utils.unregister_class(cls)
     from .data import material_nodes
     material_nodes.unregister()
+    from .src import native_effects, nc_skill_ui
+    nc_skill_ui.unregister()
+    native_effects.unregister()
 
 
 if __name__ == "__main__":

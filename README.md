@@ -17,6 +17,8 @@ with a New Century model-conversion workflow and cinematic preview tools.
 | Textures | `.img`, `.dds`, `.png` | Game-ready `.img` DDS with mipmaps, or PNG |
 | Native camera rig | `cam_*.geom` + neighboring `.anim` | Motion channels, FOV and clip planes; unknown data retained |
 | Cinematic preview JSON | Source actor, sampled camera/FOV and sound cues | Blender scene; no native TS effect package |
+| Captured NC skill library | Select cast, approach, return or cinematic beside the source model | Independent Blender scenes with source animation/audio and optional captured camera |
+| Native `.sprk` effect graph | Verified common ranges, timing and transform keys | Scoped native edits preserving unknown bytes; translation guides only |
 | Exported native model package | Existing `.geom` + base `.anim` + `.nlst` | Validated new package with local shaders/textures and a dependency manifest |
 
 **Tested:** Windows x64, Blender **5.1.2** and **5.3.0**. The add-on targets the
@@ -27,7 +29,7 @@ Python; the included build supports **CPython 3.13**. See
 ## Install
 
 1. Build this checkout with `python tools/package_addon.py` and use
-   `dist/Time_Stranger_Importer.zip`. Version 1.3 is currently a local build;
+   `dist/Time_Stranger_Importer.zip`. Version 1.4 is currently a local build;
    it has not been published to
    [Releases](https://github.com/ElderLich/Time-Stranger-Importer/releases).
 2. In Blender, open **Edit → Preferences → Add-ons → Install from Disk** and
@@ -55,6 +57,14 @@ The importer converts bind poses and root motion, rebuilds the export rig,
 borrows the donor's material metadata, and optionally creates an outline mesh.
 Retarget the donor texture references to your model's actual images using the
 sidebar tools. Export the geometry and choose **NC Moveset** for TS clip names.
+
+Enable **Import Related Skill Scenes** in the model import dialog to also open
+each unambiguous captured cast/approach in a separate scene. Or choose
+**New Century Skill Phases (.glb)** to select an individual phase, including a
+cinematic. The default selects the actual attack rather than the showcase.
+Cameras are imported only where the selected source phase contains one;
+effect timeline records remain inspection references. See the
+[skill/effect workflow](docs/skill-effect-workflows.md) for the current limits.
 
 The donor provides the game's shader/layout contract. It does not make Unity
 materials or effects automatically equivalent to Time Stranger's renderer.

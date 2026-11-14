@@ -21,21 +21,29 @@ def camera_transform(position, rotation):
     return UNITY_TO_BLENDER @ source @ CAMERA_AXES
 
 
-def import_preview(context, filepath, import_actor=True):
+def import_preview(context, filepath, import_actor=True, *, import_camera=True,
+                   import_audio=True, import_effect_references=True):
     path = Path(filepath).resolve()
     source = json.loads(path.read_text(encoding='utf-8-sig'))
-    if source.get('format') != 'dsts-cinematic-preview-v1':
-        raise ValueError('Expected dsts-cinematic-preview-v1 JSON')
-    camera_source = source.get('camera', {})
-    if camera_source.get('coordinate_system') != 'unity-left-handed-y-up':
+    if source.get('format') not in {'dsts-cinematic-preview-v1', 'dsts-cinematic-preview-v2'}:
+        raise ValueError('Expected dsts-cinematic-preview-v1 or v2 JSON')
+    camera_source = (source.get('camera') or {}) if import_camera else {}
+    if camera_source and camera_source.get('coordinate_system') != 'unity-left-handed-y-up':
         raise ValueError('Preview requires explicitly declared Unity camera coordinates')
     samples = camera_source.get('samples', [])
-    if not samples:
-        raise ValueError('Preview contains no sampled camera motion')
+    if camera_source and not samples:
+        raise ValueError('Declared camera contains no sampled camera motion')
     fps = float(source.get('fps', 30))
     if not math.isfinite(fps) or not 1 <= fps <= 240:
         raise ValueError('Preview FPS must be between 1 and 240')
     origin = float(source.get('frame_origin', 0))
+    duration = float(source.get('duration_frames', samples[-1]['frame'] if samples else 0))
+    delay = float(source.get('actor_delay_frames', 0))
+    if not all(math.isfinite(value) for value in (origin, duration, delay)) or duration < origin or delay < 0:
+        raise ValueError('Invalid preview duration, origin or actor delay')
+    if import_actor and source.get('actor_keep_pose'):
+        raise ValueError('This phase keeps the prior actor pose. Import its approach/cast first; '
+                         'disable Source Actor to inspect its effect/audio references independently')
     frame = lambda value: float(value) - origin + 1
     transforms = []
     for sample in samples:
@@ -50,10 +58,12 @@ def import_preview(context, filepath, import_actor=True):
     actor_path = resolve(source['actor_path']) if import_actor and source.get('actor_path') else None
     if actor_path and not actor_path.is_file():
         raise FileNotFoundError(actor_path)
-    audio = [(item, resolve(item['path'])) for item in source.get('audio', [])]
-    for _, audio_path in audio:
+    audio = [(item, resolve(item['path'])) for item in source.get('audio', [])] if import_audio else []
+    for cue, audio_path in audio:
         if not audio_path.is_file():
             raise FileNotFoundError(audio_path)
+        if not all(math.isfinite(float(cue.get(key, default))) for key, default in [('frame', 0), ('volume', 1)]):
+            raise ValueError('Audio timing and volume must be finite')
 
     from .scene_state import snapshot, rollback
     before = snapshot()
@@ -64,9 +74,13 @@ def import_preview(context, filepath, import_actor=True):
         scene.render.fps = round(fps)
         scene.render.fps_base = round(fps) / fps
         scene.frame_start = 1
-        scene.frame_end = max(1, math.ceil(frame(source.get('duration_frames', samples[-1]['frame']))))
+        scene.frame_end = max(1, math.ceil(frame(duration)))
         scene['DSTS_preview_manifest'] = str(path)
+        scene['DSTS_preview_source_json'] = json.dumps(source, ensure_ascii=False)
         scene['DSTS_preview_limitations'] = '\n'.join(source.get('limitations', []))
+        scene['DSTS_preview_kind'] = source.get('phase_kind', 'showcase')
+        scene['DSTS_preview_actor_clip'] = source.get('actor_clip', '')
+        scene['DSTS_preview_actor_delay'] = delay
         if actor_path:
             result = bpy.ops.import_scene.gltf(filepath=str(actor_path))
             if result != {'FINISHED'}:
@@ -84,38 +98,21 @@ def import_preview(context, filepath, import_actor=True):
                         if strip.action and (strip.action.name == clip or strip.action.name.startswith(clip + '.')):
                             candidates.append(strip)
                 if len(candidates) == 1:
-                    ad.action = candidates[0].action
-                    ad.action_slot = candidates[0].action_slot
+                    chosen = candidates[0]
+                    ad.action = None
+                    for track in ad.nla_tracks:
+                        if chosen in list(track.strips):
+                            track.mute = False
+                    length = chosen.frame_end - chosen.frame_start
+                    chosen.frame_start = 1 - origin + delay
+                    chosen.frame_end = chosen.frame_start + length
+                    chosen.extrapolation = 'NOTHING'
                     assigned += 1
             if not assigned:
                 raise ValueError(f'Actor GLB has no unambiguous NLA clip {clip!r}')
 
-        camera_data = bpy.data.cameras.new('NC source camera')
-        camera = bpy.data.objects.new('NC source camera', camera_data)
-        scene.collection.objects.link(camera)
-        scene.camera = camera
-        camera.rotation_mode = 'QUATERNION'
-        camera_data.sensor_fit = 'VERTICAL'
-        camera_data.sensor_height = 24
-        camera_data.clip_start = max(.001, float(camera_source.get('near', .1)))
-        camera_data.clip_end = max(camera_data.clip_start + 1, float(camera_source.get('far', 1000)))
-        action = bpy.data.actions.new('NC cinematic camera motion')
-        rotations, positions, lenses = [], [], []
-        previous = None
-        for at, matrix, fov in transforms:
-            location, rotation, _ = matrix.decompose()
-            if previous is not None and previous.dot(rotation) < 0:
-                rotation.negate()
-            previous = rotation
-            positions.append((at, location))
-            rotations.append((at, rotation))
-            lenses.append((at, camera_data.sensor_height / (2 * math.tan(fov / 2))))
-        for component in range(3):
-            _write_curve(action, camera, 'location', component, [(f, v[component]) for f, v in positions], 'Camera')
-        for component in range(4):
-            _write_curve(action, camera, 'rotation_quaternion', component, [(f, q[component]) for f, q in rotations], 'Camera')
-        lens_action = bpy.data.actions.new('NC cinematic camera lens')
-        _write_curve(lens_action, camera_data, 'lens', 0, lenses, 'Lens')
+        if samples:
+            _import_camera(scene, camera_source, transforms)
         if audio:
             editor = scene.sequence_editor_create()
             strips = getattr(editor, 'strips', None)
@@ -125,9 +122,11 @@ def import_preview(context, filepath, import_actor=True):
                 sound = strips.new_sound(sound_path.stem, str(sound_path), channel=channel,
                                          frame_start=round(frame(cue['frame'])))
                 sound.volume = max(0, float(cue.get('volume', 1)))
+                if source.get('phase_kind') == 'showcase' and sound.frame_final_end > scene.frame_end + 1:
+                    sound.frame_final_end = scene.frame_end + 1
         effects = bpy.data.collections.new('Source effect references (not rendered)')
         scene.collection.children.link(effects)
-        for index, cue in enumerate(source.get('effects', [])):
+        for index, cue in enumerate(source.get('effects', []) if import_effect_references else []):
             reference = bpy.data.objects.new(f"Effect {index + 1}: {cue.get('prefab', cue.get('description', 'source'))}", None)
             reference.hide_render = True
             reference.hide_viewport = True
@@ -143,3 +142,32 @@ def import_preview(context, filepath, import_actor=True):
         bpy.data.scenes.remove(scene)
         rollback(before)
         raise
+
+
+def _import_camera(scene, camera_source, transforms):
+    camera_data = bpy.data.cameras.new('NC source camera')
+    camera = bpy.data.objects.new('NC source camera', camera_data)
+    scene.collection.objects.link(camera)
+    scene.camera = camera
+    camera.rotation_mode = 'QUATERNION'
+    camera_data.sensor_fit = 'VERTICAL'
+    camera_data.sensor_height = 24
+    camera_data.clip_start = max(.001, float(camera_source.get('near', .1)))
+    camera_data.clip_end = max(camera_data.clip_start + 1, float(camera_source.get('far', 1000)))
+    action = bpy.data.actions.new('NC cinematic camera motion')
+    rotations, positions, lenses = [], [], []
+    previous = None
+    for at, matrix, fov in transforms:
+        location, rotation, _ = matrix.decompose()
+        if previous is not None and previous.dot(rotation) < 0:
+            rotation.negate()
+        previous = rotation
+        positions.append((at, location))
+        rotations.append((at, rotation))
+        lenses.append((at, camera_data.sensor_height / (2 * math.tan(fov / 2))))
+    for component in range(3):
+        _write_curve(action, camera, 'location', component, [(f, v[component]) for f, v in positions], 'Camera')
+    for component in range(4):
+        _write_curve(action, camera, 'rotation_quaternion', component, [(f, q[component]) for f, q in rotations], 'Camera')
+    lens_action = bpy.data.actions.new('NC cinematic camera lens')
+    _write_curve(lens_action, camera_data, 'lens', 0, lenses, 'Lens')

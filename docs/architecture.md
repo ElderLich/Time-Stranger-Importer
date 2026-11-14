@@ -1,5 +1,18 @@
 # Implementation and validation
 
+## Version 1.4 skill/effect additions
+
+The [skill/effect workflow](skill-effect-workflows.md) documents the new generic
+source phase selector, optional camera/audio import, related-model choices and
+native common SPRK range/key editing. Actual cast and approach clips are chosen
+independently from cinematic showcases. Native effect export uses the maintained
+Formats codec; the axes in Blender are translation guides, not particle draws.
+Both workflows passed import/edit/save/reopen checks in Blender 5.1.2 and 5.3.0.
+The backend is now Formats `bf333a4`, SHA256
+`657755f90750f1c35de07b40dbf82e8b58793bdf5d3bc3a9f6763a8f99c4ff78`, including
+atomic file replacement. The older implementation narrative below records the
+1.3 baseline; its shader/rig repairs remain in force.
+
 ## What was rewritten in 1.3
 
 The binary serializers and source inverse bind matrices are retained.
