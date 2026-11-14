@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+import textwrap
 
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
@@ -413,6 +414,15 @@ class DSTS_PT_NativeSkill(Panel):
         layout.operator(DSTS_OT_NativeSkillInspect.bl_idname, icon='VIEWZOOM')
         if state.report_json:
             report = json.loads(state.report_json)
+            coverage = report.get('coverage')
+            if coverage:
+                box = layout.box()
+                box.label(text=f"Source systems: {coverage['represented']} / {coverage['systems']} represented")
+                for item in coverage.get('uncovered', [])[:8]:
+                    box.label(text=f"Node {item['node_index']}: {item['node_path'].rsplit('/', 1)[-1]}", icon='ERROR')
+                    reasons = item.get('reasons') or [item['status']]
+                    for line in textwrap.wrap(str(reasons[0]), width=48):
+                        box.label(text=line)
             messages = dict.fromkeys(row['message'] for row in report.get('errors', []) + report.get('blockers', []))
             for message in list(messages)[:6]:
                 layout.label(text=message, icon='ERROR')

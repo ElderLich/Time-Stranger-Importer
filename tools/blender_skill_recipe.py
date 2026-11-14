@@ -137,6 +137,13 @@ if args.recipe:
     assert bpy.ops.dsts.native_skill_inspect() == {'FINISHED'}
     inspection = json.loads(state.report_json)
     assert inspection['buildable'], inspection['errors']
+    if 'coverage' in inspection:
+        coverage = inspection['coverage']
+        effects = sum(row['kind'] == 'effect' for row in inspection['components'])
+        assert coverage['represented'] == effects
+        assert coverage['systems'] - coverage['represented'] == len(coverage['uncovered'])
+        assert all(row['node_path'] and row['reasons'] for row in coverage['uncovered'])
+        checks.append('exact uncovered source systems retain node identities and rejection reasons')
     state.output = str(work / 'candidate')
     full_recipe = ui.scene_recipe(scene)
     full_report = state.report_json

@@ -49,7 +49,7 @@ captured data. Selecting a return or held-pose phase does not synthesize a full
 skill. The returned mappings remain blank/null until selected explicitly.
 
 Inspection returns `source`, `effects`, `requirements`, `errors`, `blockers`,
-`components`, `files`, `compositions`, `buildable`, `installable:false` and
+`components`, `files`, `compositions`, `coverage`, `buildable`, `installable:false` and
 `plan_sha256`. Errors reject a build. Blockers describe missing release work;
 they may coexist with buildable, incomplete review assets. At least one valid
 component is required. Changing inputs or controls invalidates the reviewed
@@ -77,6 +77,9 @@ plan. `pin_file(path)` returns `{path, sha256, bytes}` with an absolute path.
   a review choice; the current composer does not install banks or silently
   borrow donor sound. Source timing and lifetimes remain required work.
 - `components` is an ordered list of exact producer-manifest pins.
+- Optional `coverage_evidence` pins producer coverage reports. Components can
+  also carry `coverage_evidence` pins, so choosing a reviewed component brings
+  its source rejection reasons into the inspection without script edits.
 
 The API does not contain model-specific paths, actor IDs or effect allocations.
 
@@ -168,6 +171,39 @@ concatenated actor clips are invented. The event root's hit table is zeroed;
 native skill/per-hit scheduling must be implemented separately. This explains
 why valid BSON can be produced while the candidate remains non-installable.
 
+## Exact source-system coverage
+
+Inspection now enumerates every captured particle-system node for each source
+event. The `coverage` report contains `systems` and `represented` counts,
+ordered `events`, exact `uncovered` rows and independent `errors`. Represented
+means a selected component references that exact source model/role/phase,
+asset hash, event order and node index/path. It does not mean supported or
+accepted in game. Reusing the same asset for caster and target events preserves
+both independent rows and clocks.
+
+Each row records the actual render mode, alignment, simulation space, active
+and renderer flags, emission descriptor, 3D rotation, pivot, stretch, custom
+streams, source shader and pass states. Missing nodes remain visible even when
+their recorded rate is zero, renderer is disabled or a producer bake has no
+particles. Additional captured light/controller/scene records remain a separate
+coverage requirement. Prefab matching follows the existing source importer's
+case-insensitive asset selection while retaining the exact source strings.
+
+Producer reports use `nc-native-skill-coverage-evidence-v1` with `records`:
+each record carries `source` identity/asset pin/event order/exact source event,
+`node_index`, `node_path`, `status`, `reason` and nonempty pinned `provenance`.
+Producer status is `covered`, `rejected`, `unsupported` or `inactive`. A producer
+`covered` claim cannot replace a missing selected component; an inactive claim
+cannot silently omit a source node. A selected component conflicting with a
+rejection is an inspection error. Changed report/provenance hashes reject a
+build, and accepted report snapshots accompany the candidate.
+
+`coverage_complete` only describes source-node representation. Native material
+dependency closure, render/lifecycle parity and game acceptance remain separate
+requirements. The current reference fixture represents 56 of 61 ordinary
+Sevenfold systems and 11 of 13 Triple systems; seven exact source systems remain
+unrepresented across these phases.
+
 ## Publication and tests
 
 Build publishes a new sibling-staged directory containing `recipe.json`,
@@ -182,6 +218,9 @@ publication platform is Windows; the POSIX rename guard is cooperative, not an
 interprocess lock.
 
 Run `python -m unittest discover -s tests -p test_skill_conversion.py -v`.
+Run `python -m unittest discover -s tests -p test_skill_coverage.py -v` for
+source coverage, same-asset ownership separation, producer provenance,
+conflicting/missing components and explicit inactive/zero-rate retention.
 Checks exercise actual BSON parse/composition/readback, independent source
 event timing, exact dependency inclusion, case/prefix/traversal conflicts,
 source/node identity, stale plans, mid-build source edits, existing destination

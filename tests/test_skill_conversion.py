@@ -277,6 +277,35 @@ class SkillConversionTests(unittest.TestCase):
         self.recipe['components'][1] = pin_file(audio_path)
         self.assertFalse(inspect_recipe(self.recipe)['buildable'])
 
+    def test_component_coverage_evidence_is_pinned_reviewed_and_snapshotted(self):
+        source_document = json.loads(self.asset.read_text())
+        source_document['effect_nodes'] = [{'path': 'hit/sprite', 'prefab': 'x901_hit',
+                                            'components': ['Transform', 'ParticleSystem', 'ParticleSystemRenderer']}]
+        self.asset.write_text(json.dumps(source_document))
+        self.component['source']['asset'] = pin_file(self.asset)
+        self.recipe = create_recipe(self.model, '2:0', 'chr9001', 'bs02', {'target': self.donor})
+        self.recipe['socket_mappings'][0]['native_socket'] = '@root'
+        proof = self.component_path.parent / 'producer-audit.txt'
+        proof.write_text('Reviewed producer evidence')
+        evidence = self.component_path.parent / 'coverage.json'
+        origin = copy.deepcopy(self.component['source'])
+        index, node_path = origin.pop('node_index'), origin.pop('node_path')
+        evidence.write_text(json.dumps({'format': 'nc-native-skill-coverage-evidence-v1', 'records': [
+            {'source': origin, 'node_index': index, 'node_path': node_path, 'status': 'covered',
+             'reason': 'Finite component reviewed; runtime acceptance pending', 'provenance': [pin_file(proof)]}]}))
+        self.component['coverage_evidence'] = [{**pin_file(evidence), 'path': evidence.name}]
+        self.repin_component()
+        report = inspect_recipe(self.recipe)
+        self.assertEqual(report['errors'], [])
+        self.assertEqual((report['coverage']['represented'], report['coverage']['systems']), (1, 1))
+        output = self.root / 'coverage-candidate'
+        build_candidate(self.recipe, output, expected_plan_sha256=report['plan_sha256'])
+        self.assertEqual((output / 'provenance/coverage-0000.json').read_bytes(), evidence.read_bytes())
+        proof.write_text('Changed producer evidence')
+        changed = inspect_recipe(self.recipe)
+        self.assertFalse(changed['buildable'])
+        self.assertTrue(any(row['code'] == 'coverage-evidence' for row in changed['errors']))
+
     def test_omitted_node_identity_and_symlink_input_are_rejected(self):
         del self.component['source']['node_path']
         self.repin_component()

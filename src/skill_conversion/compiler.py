@@ -19,6 +19,7 @@ except ImportError:
     from spark import SparkDocument
 
 from .bson import compose_event
+from .coverage import inspect_coverage
 
 RECIPE_FORMAT = 'nc-native-skill-recipe-v1'
 COMPONENT_FORMAT = 'nc-native-skill-component-v1'
@@ -194,6 +195,8 @@ def _collect(recipe):
             error('socket-mapping', 'Duplicate or invalid source socket mapping')
         sockets[key] = row.get('native_socket', '')
     ids, node_keys = set(), set()
+    coverage_pins = copy.deepcopy(recipe.get('coverage_evidence', []))
+    _require(isinstance(coverage_pins, list), 'Coverage evidence must be a list of pinned manifests')
     for pin in recipe.get('components', []):
         try:
             path, raw = _check_pin(pin)
@@ -308,9 +311,26 @@ def _collect(recipe):
                 block('audio-lifecycle-review', 'Encoded audio requires bank collision, routing and source lifetime acceptance', component=identity)
             for reason in component.get('blockers', []):
                 block('component-incomplete', str(reason), component=identity)
+            for evidence in component.get('coverage_evidence', []):
+                evidence = copy.deepcopy(evidence)
+                evidence_path = Path(evidence['path'])
+                if not evidence_path.is_absolute():
+                    evidence['path'] = str(path.parent / evidence_path)
+                coverage_pins.append(evidence)
             components.append({'pin': pin, 'manifest': component})
         except (OSError, ValueError, KeyError, TypeError) as exc:
             error('component-invalid', exc)
+
+    coverage = inspect_coverage(source, [item['manifest'] for item in components], producer_evidence=coverage_pins)
+    errors.extend(coverage['errors'])
+    for missing in coverage['uncovered']:
+        reason = '; '.join(missing['reasons'])
+        block('source-system-uncovered',
+              f"{missing['side']} event {missing['event_order']} node {missing['node_index']} "
+              f"{missing['node_path']} ({missing['render_mode']}): {reason}", **missing)
+    for event in coverage.get('events', []):
+        for other in event['other_records']:
+            block('source-record-uncovered', other['reason'], event_order=event['event_order'], **{key: value for key, value in other.items() if key != 'reason'})
 
     # BSON is event-local: source side/order/frame stays in the route plan.
     # No source phase is reinterpreted as a complete ordinary skill lifecycle.
@@ -323,7 +343,7 @@ def _collect(recipe):
         if not selected:
             block('effect-components-missing', f'No converted components for source event {order}', event_order=order)
             continue
-        block('effect-coverage-review', f'Source event {order} requires full system coverage and native dependency acceptance', event_order=order)
+        block('native-effect-acceptance', f'Converted event {order} still requires native GEOM/material dependency and render/lifecycle acceptance', event_order=order)
         if not socket:
             block('socket-missing', f'Map {anchor["side"]} socket {anchor["name"]}', event_order=order)
             continue
@@ -375,7 +395,7 @@ def _collect(recipe):
               'requirements': ['actor motion/lifecycle', 'all source effect systems', 'caster/target socket owners',
                                'BSON event scheduling', 'source audio and cue banks', 'native table routes',
                                'complete dependency closure', 'game acceptance'],
-              'errors': errors, 'blockers': blockers, 'installable': False,
+              'errors': errors, 'blockers': blockers, 'coverage': coverage, 'installable': False,
               'buildable': bool(components) and not errors,
               'components': [{'id': item['manifest']['id'], 'kind': item['manifest']['kind'], 'pin': item['pin']} for item in components],
               'files': sorted(files.values(), key=lambda item: item['resource_path']), 'compositions': compositions}
@@ -433,6 +453,9 @@ def build_candidate(recipe, output, *, expected_plan_sha256=None):
         for index, pin in enumerate(recipe.get('components', [])):
             _, raw = _check_pin(pin)
             _write(temporary / 'provenance' / f'component-{index:04d}.json', raw)
+        for index, pin in enumerate(report['coverage'].get('evidence', [])):
+            _, raw = _check_pin(pin)
+            _write(temporary / 'provenance' / f'coverage-{index:04d}.json', raw)
         verified = inspect_recipe(recipe)
         _require(verified['plan_sha256'] == report['plan_sha256'], 'Inputs changed while preparing candidate')
         _require(not destination.exists() and not destination.is_symlink(), 'Candidate destination appeared during build')
@@ -441,6 +464,7 @@ def build_candidate(recipe, output, *, expected_plan_sha256=None):
                   'files': [{'path': 'resources/' + name, 'sha256': _sha(raw), 'bytes': len(raw)}
                             for name, raw in sorted({**payloads, **generated}.items())],
                   'compositions': report['compositions'],
+                  'coverage': report['coverage'],
                   'status': 'Native component review assets; full skill/package/game acceptance incomplete'}
         _write(temporary / 'candidate.json', _json(result))
         # Same-volume Windows rename fails if destination exists. On POSIX,
