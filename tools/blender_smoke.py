@@ -159,6 +159,29 @@ with tempfile.TemporaryDirectory(prefix='dsts_texture_') as folder:
     assert raw[128:132] == bytes((128, 0, 255, 255))
 print('PASS DDS channel clipping and complete mip chain')
 
+# Byte PNGs expose encoded samples; float buffers expose linear samples.
+# Exercise a real loaded file so a double sRGB encode cannot pass unnoticed.
+import struct
+import zlib
+with tempfile.TemporaryDirectory(prefix='dsts_srgb_') as folder:
+    def chunk(kind, content):
+        return struct.pack('>I', len(content)) + kind + content + struct.pack('>I', zlib.crc32(kind + content))
+    png = Path(folder) / 'source.png'
+    source_rgba = bytes([64, 128, 194, 230]) * 4
+    png.write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 6, 0, 0, 0))
+                   + chunk(b'IDAT', zlib.compress(b'\0' + source_rgba[:8] + b'\0' + source_rgba[8:])) + chunk(b'IEND', b''))
+    loaded = bpy.data.images.load(str(png))
+    assert not loaded.is_float and loaded.colorspace_settings.name == 'sRGB'
+    output = Path(folder) / 'source.img'
+    export_image_as_dds(loaded, str(output))
+    assert output.read_bytes()[128:144] == bytes([194, 128, 64, 230]) * 4
+    linear = bpy.data.images.new('Linear source', width=1, height=1, float_buffer=True)
+    linear.colorspace_settings.name = 'sRGB'
+    linear.pixels[:] = [.2158605, .2158605, .2158605, 1]
+    export_image_as_dds(linear, str(output))
+    assert output.read_bytes()[128:132] == bytes([128, 128, 128, 255])
+print('PASS loaded PNG and float-buffer sRGB conversion')
+
 from Time_Stranger_Importer.src.geom import import_geom, export_geom
 from Time_Stranger_Importer.src.mesh import export_mesh_object
 from mathutils import Matrix

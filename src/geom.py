@@ -390,6 +390,14 @@ def export_image_as_dds(image, output_path):
 
     pixels = np.array(image.pixels[:], dtype=np.float32).reshape((height, width, 4))
     pixels = np.flipud(pixels)
+    # Blender exposes byte-backed image.pixels in the image's stored colour
+    # space. Float-backed images expose scene-linear values. Decode only byte
+    # sRGB buffers before linear mip filtering, otherwise loaded PNGs receive a
+    # second gamma conversion (64 becomes 137 in an 8-bit DDS).
+    if image.colorspace_settings.name == 'sRGB' and not image.is_float:
+        rgb = np.maximum(pixels[:, :, :3], 0)
+        pixels[:, :, :3] = np.where(rgb <= 0.04045, rgb / 12.92,
+                                    np.power((rgb + 0.055) / 1.055, 2.4))
     mip_data = []
     while True:
         encoded = pixels.copy()
