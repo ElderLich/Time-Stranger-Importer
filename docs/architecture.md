@@ -62,6 +62,11 @@ data ownership and testable conversion functions.
   their ANIM curves. Material hash targets follow renamed materials; missing
   targets fail explicitly. Metadata lookup uses the native data node type, so
   renaming a material or its node group cannot disconnect its export settings.
+- Generated base `.anim` files explicitly keyed identity transforms, erasing
+  native bone offsets before motion blending. They now use sparse one-frame
+  clips matching the genuine chr050/chr395 base files. Native `0x140364070`
+  initializes channels from GEOM; `0x1403A5B30` and `0x1403A65B0` replace keyed
+  values rather than interpreting identity keys as the model's rest pose.
 - The updated geometry backend bounds binary reads and preserves camera, float,
   and parent-table records. A compact source bind-pose snapshot survives saved
   Blender scenes. Untouched bones retain exact source TRS and inverse bind

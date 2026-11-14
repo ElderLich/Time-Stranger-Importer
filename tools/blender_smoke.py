@@ -31,6 +31,10 @@ bpy.ops.object.mode_set(mode='EDIT')
 bone = arm.data.edit_bones.new('Root "escaped"')
 bone.tail.y = 1
 bpy.ops.object.mode_set(mode='OBJECT')
+base_pose = addon._build_rest_pose_anim_file(arm)
+assert base_pose.bone_count == 1 and base_pose.frame_count == 1
+assert not base_pose.positions and not base_pose.rotations and not base_pose.scales
+print('PASS native base animation inherits GEOM bind pose without identity overrides')
 
 source = AnimFileHundredLine()
 source.bone_count = 1

@@ -7,6 +7,7 @@ import bpy
 import base64
 import os
 import re
+import math
 from pathlib import Path
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 from bpy.props import StringProperty, EnumProperty, BoolProperty, FloatProperty
@@ -666,11 +667,9 @@ def _action_has_pose_curves(action):
 def _seed_rest_pose_into_action(armature, action, frame=1.0):
     """Insert one rest-pose (identity basis) key per pose bone into ``action``.
 
-    Mirrors Romstar's ``add_rest_pose_to_base_anim``: the base action is NOT a
-    truly empty/keyframeless action â€” it carries a rest-pose key for every bone
-    so the exported ``.anim`` supplies the bind pose the engine attaches meshes
-    to. Keying identity basis (loc 0, rot identity, scale 1) encodes the rest
-    pose regardless of how the armature is currently posed. Returns the bone count.
+    This is an editable Blender action: identity basis displays the rig's rest
+    pose regardless of its current pose. Native stem.anim files use sparse
+    channels instead; see _build_rest_pose_anim_file. Returns the bone count.
     """
     if not armature or armature.type != "ARMATURE" or not armature.pose:
         return 0
@@ -1550,24 +1549,24 @@ class DSTS_OT_AnimExportAll(Operator):
 
 
 def _build_rest_pose_anim_file(armature_obj, playback_rate=30.0):
-    """Build the stem.anim rest-pose file from the current export armature."""
-    ad = armature_obj.animation_data or armature_obj.animation_data_create()
-    previous_action, previous_slot = ad.action, getattr(ad, 'action_slot', None)
-    action = bpy.data.actions.new(f"{armature_obj.name}_rest_export")
-    try:
-        if _seed_rest_pose_into_action(armature_obj, action, frame=1.0) == 0:
-            raise RuntimeError("Armature has no pose bones to export as a base rest pose")
-        return build_basic_hundred_line_anim_from_action(
-            armature_obj,
-            action,
-            playback_rate=playback_rate,
-        )
-    finally:
-        ad.action = previous_action
-        if previous_slot is not None:
-            ad.action_slot = previous_slot
-        if action.users == 0:
-            bpy.data.actions.remove(action)
+    """Keep GEOM's native bind pose by leaving base ANIM channels absent.
+
+    Native 0x140364070 copies the GEOM rest transforms before evaluating an
+    animation. Explicit identity keys overwrite those transforms; unlike an
+    empty native base clip, they collapse nonzero bone offsets. Genuine chr050
+    and chr395 base files use this sparse one-frame representation.
+    """
+    from .src.anim import AnimFileHundredLine
+    if not armature_obj or armature_obj.type != 'ARMATURE' or not armature_obj.data.bones:
+        raise RuntimeError('Armature has no bones to export as a base rest pose')
+    if not math.isfinite(playback_rate) or playback_rate <= 0:
+        raise ValueError('Animation playback rate must be finite and positive')
+    result = AnimFileHundredLine()
+    result.bone_count = len(armature_obj.data.bones)
+    result.bone_blend_factors = [255] * result.bone_count
+    result.frame_count = 1
+    result.playback_rate = playback_rate
+    return result
 
 
 # NC clip/action aliases -> TS animation code. TS-coded target tracks such as
