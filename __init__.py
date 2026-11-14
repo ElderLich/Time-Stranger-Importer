@@ -2687,6 +2687,13 @@ class DSTS_PT_WorkflowPanel(Panel):
         scene = context.scene
         collection = _active_geom_collection(context)
         collection_name = collection.name if collection else "__NONE__"
+        if collection and 'DSTS_camera_source' in collection:
+            lens = layout.box()
+            lens.label(text='Native Camera Lens')
+            for key in collection.keys():
+                if key.startswith('DSTS_camera_') and key.endswith(('_fov_degrees', '_near', '_far')):
+                    lens.prop(collection, '["' + key + '"]', text=key.removeprefix('DSTS_camera_').replace('_', ' ').title())
+            lens.label(text='ANIM lens tracks can override static FOV.', icon='INFO')
         target_chr = _target_chr_from_context(context, collection, scene.dsts_workflow_target_chr) or scene.dsts_workflow_target_chr
         if target_chr and target_chr != scene.dsts_workflow_target_chr:
             scene.dsts_workflow_target_chr = target_chr

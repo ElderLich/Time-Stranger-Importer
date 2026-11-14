@@ -10,10 +10,10 @@ One-click import of an nc-extractor model.glb into an export-ready DSTS scene:
 3.  Re-add the missing root bone. NC glbs contain the full Bip001 rig but the
     top-level ``Bip001`` node is not in any skin's joint list, so the glTF
     importer drops it as a bone and folds its (animated) transform onto the
-    armature OBJECT. We read the glb JSON chunk to find that node, create it as
-    a bone, and rehome the object-level animation of every action onto the new
-    root bone's pose curves (deltas vs its rest), then strip the object-level
-    F-Curves. After this the exported .anim carries NC root motion.
+    armature OBJECT. We read the glb JSON chunk to find that node and create it
+    as a bone. Source world poses are sampled before rebuilding the rig; every
+    new pose basis is solved against the final rest hierarchy and game bone
+    flags. Object motion is included in those poses, then its curves are removed.
 4.  Re-seat everything in file-consistent space: the glTF importer leaves
     skinned vertices and bone rests in bind/armature space with a non-bind
     transform on the armature object. We derive the rigid axis rotation M that
@@ -38,8 +38,9 @@ chr110_bn01.anim):
   Y-up file space as the glb node hierarchy.
 - New root bone rest R = the armature object's static world transform with
   animation cleared (the importer's conversion of the root node's TRS).
-- Root delta per frame: ``D(f) = R^-1 @ O(f) @ M^-1 @ R`` where O(f) is the
-  armature object world transform animated by the action's object F-Curves.
+- Animation conversion uses ``Bone.convert_local_to_pose(..., invert=True)``
+  with each original world matrix and the original animated parent matrix;
+  this preserves both root motion and changed child rest bases.
 """
 
 import bpy
@@ -876,6 +877,78 @@ def _bone_depth_groups(armature_obj):
     return depth_groups
 
 
+def _capture_source_world_poses(context, armature_obj, actions, root_name, static_basis):
+    """Capture the glTF scene before changing its bind space or parenting."""
+    ad = armature_obj.animation_data or armature_obj.animation_data_create()
+    previous_frame = context.scene.frame_current
+    samples = {}
+    for track in ad.nla_tracks:
+        track.mute = True
+    for action in actions:
+        slot, curves = _pose_slot_and_fcurves(action)
+        if not curves:
+            continue
+        ad.action = action
+        _assign_action_slot(ad, slot)
+        armature_obj.matrix_basis = static_basis.copy()
+        _set_pose_to_rest(armature_obj)
+        start, end = _action_frame_span(action)
+        frames = {}
+        for frame in range(start, end + 1):
+            context.scene.frame_set(frame)
+            context.view_layer.update()
+            world = armature_obj.matrix_world.copy()
+            poses = {b.name: world @ b.matrix for b in armature_obj.pose.bones}
+            if root_name:
+                poses[root_name] = world
+            frames[frame] = poses
+        samples[action] = (slot, frames)
+    ad.action = None
+    armature_obj.matrix_basis = static_basis.copy()
+    _set_pose_to_rest(armature_obj)
+    context.scene.frame_set(previous_frame)
+    return samples
+
+
+def _bake_source_world_poses(context, armature_obj, samples):
+    """Solve source world poses against the final rest rig and game bone flags.
+
+    Reparenting a glTF root under a new root changes its rest basis. Copying
+    old child quaternions silently rotates the whole animated model. Solving
+    every target basis from the source world matrix preserves the pose and
+    handles both the root change and use_local_location=False in one step.
+    """
+    for bone in armature_obj.data.bones:
+        bone.use_local_location = False
+    maximum_error = 0.0
+    for action, (slot, frames) in samples.items():
+        tracks = {b.name: {} for b in armature_obj.data.bones}
+        for frame, poses in frames.items():
+            for bone in armature_obj.data.bones:
+                kwargs = {}
+                if bone.parent:
+                    kwargs = {'parent_matrix': poses[bone.parent.name],
+                              'parent_matrix_local': bone.parent.matrix_local}
+                basis = bone.convert_local_to_pose(poses[bone.name], bone.matrix_local,
+                                                   invert=True, **kwargs)
+                loc, rot, scale = basis.decompose()
+                reconstructed = bone.convert_local_to_pose(Matrix.LocRotScale(loc, rot, scale),
+                                                            bone.matrix_local, **kwargs)
+                error = max(abs(reconstructed[r][c] - poses[bone.name][r][c])
+                            for r in range(4) for c in range(4))
+                maximum_error = max(error, maximum_error)
+                if error > .001:
+                    raise NcImportError(f'{action.name}: bone {bone.name} needs unsupported shear at frame {frame} ({error:.6f})')
+                tracks[bone.name][frame] = basis
+        write_pose_matrix_keys(action, armature_obj, slot, tracks)
+        remove_object_transform_fcurves(action)
+    armature_obj.animation_data.action = None
+    _set_pose_to_rest(armature_obj)
+    context.view_layer.update()
+    _log(f'Baked {len(samples)} source world-pose clips; maximum matrix error {maximum_error:.7f}')
+    return maximum_error
+
+
 def _restore_bone_flags(armature_obj, flags, *, force_game_location=False):
     for bone in armature_obj.data.bones:
         local_location, inherit_rotation, inherit_scale = flags[bone.name]
@@ -1540,56 +1613,16 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
                          "root rest may be skewed")
         _log(f"root rest translation: {tuple(round(v, 5) for v in root_rest.translation)}")
 
-    # --- per-action root motion (object F-Curves -> root bone deltas) ----
-    # The new root bone's world transform is keyed to equal the armature
-    # OBJECT's animated world O(t) (= the glb root node's motion), i.e.
-    # delta_root(t) = R^-1 @ O(t). The bones that used to be parentless keep
-    # their imported local pose deltas. Their rests are already rebuilt in the
-    # fitted export space, so applying another alignment/root basis correction
-    # double-converts models like x133 where Bip001 and accessory roots carry
-    # real animation.
-    rotation_mode = old_armature.rotation_mode
+    # Preserve source world poses before changing the bind basis or hierarchy.
     parent_world = old_armature.parent.matrix_world.copy() if old_armature.parent else Matrix.Identity(4)
     parent_inverse = old_armature.matrix_parent_inverse.copy()
-
-    root_deltas_by_action = {}
-    pose_slot_by_action = {}
     if missing_root:
-        # Defaults for object channels an action does not animate: the static
-        # local basis implied by the glb node TRS (the armature object's own
-        # properties are unreliable, see above).
-        static_basis = (parent_world @ parent_inverse).inverted() @ root_rest
-        static_loc, static_quat, static_scale = static_basis.decompose()
-        euler_mode = rotation_mode if rotation_mode in {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"} else "XYZ"
-        static_euler = static_quat.to_euler(euler_mode)
-        obj_defaults = {
-            ("location", 0): static_loc[0], ("location", 1): static_loc[1], ("location", 2): static_loc[2],
-            ("rotation_quaternion", 0): static_quat[0], ("rotation_quaternion", 1): static_quat[1],
-            ("rotation_quaternion", 2): static_quat[2], ("rotation_quaternion", 3): static_quat[3],
-            ("rotation_euler", 0): static_euler[0], ("rotation_euler", 1): static_euler[1],
-            ("rotation_euler", 2): static_euler[2],
-            ("scale", 0): static_scale[0], ("scale", 1): static_scale[1], ("scale", 2): static_scale[2],
-        }
-        rest_inverse = root_rest.inverted()
-
-        for action in imported_actions:
-            pose_slot, pose_fcurves = _pose_slot_and_fcurves(action)
-            if not pose_fcurves:
-                continue
-            pose_slot_by_action[action] = pose_slot
-            fcurve_map = {
-                (fc.data_path, fc.array_index): fc
-                for fc in pose_fcurves
-                if fc.data_path in OBJECT_TRANSFORM_PATHS
-            }
-            frame_start, frame_end = _action_frame_span(action)
-            deltas = {}
-            for frame in range(frame_start, frame_end + 1):
-                basis = object_basis_matrix_from_fcurves(obj_defaults, rotation_mode, fcurve_map, frame)
-                object_world = parent_world @ parent_inverse @ basis
-                deltas[frame] = rest_inverse @ object_world
-            root_deltas_by_action[action] = deltas
-        _log(f"computed root-motion deltas for {len(root_deltas_by_action)} actions")
+        source_static_world = Matrix.Rotation(math.pi / 2, 4, 'X') @ node_worlds[missing_root_index]
+        source_static_basis = (parent_world @ parent_inverse).inverted() @ source_static_world
+    else:
+        source_static_basis = old_armature.matrix_basis.copy()
+    source_world_poses = _capture_source_world_poses(
+        context, old_armature, imported_actions, missing_root, source_static_basis)
 
     # --- donor materials / flags / metadata ------------------------------
     _log(f"=== Import donor geom: {donor_geom_path}")
@@ -1606,31 +1639,8 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
     _log(f"new armature: {len(new_bone_names)} bones"
          + (f", root '{new_bone_names[0]}'" if missing_root else ""))
 
-    # --- rehome root motion into the actions, strip object curves --------
-    # Object-level curves are only removed when their motion has been rehomed
-    # onto the new root bone; otherwise they are left for the .anim exporter's
-    # object-motion composition to handle.
-    for action in imported_actions:
-        if action in root_deltas_by_action:
-            frame_start, frame_end = _action_frame_span(action)
-            tracks = {missing_root: root_deltas_by_action[action]}
-            write_pose_matrix_keys(
-                action, new_armature, pose_slot_by_action.get(action), tracks,
-            )
-            removed = remove_object_transform_fcurves(action)
-            # Bake onto the integer frame grid: the .anim format cannot store
-            # the fractional key times Unity's keyframe reduction left in the
-            # glb, and truncating them drifts the animation mid-clip.
-            resampled = resample_pose_fcurves(action, frame_start, frame_end)
-            _log(f"  {action.name}: rehomed root motion ({len(tracks)} bone track(s)), "
-                 f"removed {removed} object F-Curve(s), resampled {resampled} pose F-Curve(s)")
-
-    converted, checked = _bake_actions_to_game_location_semantics(context, new_armature, imported_actions)
-    if checked:
-        _log(
-            f"DSTS location semantics probe checked {checked} action(s), "
-            f"baked {converted}"
-        )
+    # Rebuild all local pose curves from the original scene's world poses.
+    _bake_source_world_poses(context, new_armature, source_world_poses)
 
     # --- rebuild NLA tracks on the new armature --------------------------
     from .blender_compat import create_nla_track

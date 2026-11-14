@@ -131,6 +131,19 @@ arm.animation_data.action = None
 arm.location = (0, 0, 0)
 print('PASS object-only root motion respects trimmed export interval')
 
+# glTF actions can retain an empty first object slot after root-motion bake.
+# Binding the pose slot after strips.new() must expand beyond Blender's 0..1
+# placeholder interval instead of exporting only two frames.
+layered = bpy.data.actions.new('Empty object slot before real pose')
+empty = create_action_fcurve(layered, other, 'location', 0)
+fc = create_action_fcurve(layered, arm, arm.pose.bones[0].path_from_id() + '.location', 0)
+fc.keyframe_points.insert(0, 0)
+fc.keyframe_points.insert(50, 1)
+track, strip = create_nla_track(arm, layered, 'Full selected slot', 1)
+assert strip.action_frame_start == 0 and strip.action_frame_end == 50
+assert strip.frame_end == 51
+print('PASS layered NLA strip keeps selected slot full duration')
+
 from Time_Stranger_Importer.src.geom import export_image_as_dds
 import struct
 with tempfile.TemporaryDirectory(prefix='dsts_texture_') as folder:
@@ -196,6 +209,18 @@ if camera_path.exists():
         camera_export.to_file(str(destination))
         assert destination.read_bytes() == camera_path.read_bytes()
     assert camera_export.nlst_text().strip() == camera_path.with_suffix('.nlst').read_text().strip()
+    from Time_Stranger_Importer.src.native_camera import patch_camera_lenses
+    raw = camera_path.read_bytes()
+    offset = struct.unpack_from('<Q', raw, 0x60)[0]
+    edited = patch_camera_lenses(raw, {0: {'fov_degrees': 45, 'near': .31, 'far': 1000}})
+    allowed = {offset + field + byte for field in (4, 12, 16) for byte in range(4)}
+    assert all(a == b or i in allowed for i, (a,b) in enumerate(zip(raw, edited)))
+    assert struct.unpack_from('<f', edited, offset + 4)[0] == 45
+    try:
+        patch_camera_lenses(raw, {0: {'near': 3000}})
+        raise AssertionError('Invalid camera clipping range must fail')
+    except ValueError:
+        pass
     extra = bpy.data.objects.new('Unsupported camera edit', bpy.data.meshes.new('Camera edit mesh'))
     camera.objects.link(extra)
     try:
@@ -245,6 +270,9 @@ if '--nc-export' in sys.argv:
     assert unused.name in bpy.data.meshes
     geometry = export_geom(collection)
     track = next(t for t in rig.animation_data.nla_tracks if t.name == 'skill2_display')
+    assert abs(track.strips[0].action_frame_end - track.strips[0].action_frame_start - 260) < .01
+    idle = next(t for t in rig.animation_data.nla_tracks if t.name == 'idle')
+    assert abs(idle.strips[0].action_frame_end - idle.strips[0].action_frame_start - 50) < .01
     with tempfile.TemporaryDirectory(prefix='dsts_nc_export_') as folder:
         geometry.to_file(str(Path(folder) / 'leviamon.geom'))
         addon._export_action_as_anim(rig, track.strips[0].action, track.strips[0], str(Path(folder) / 'leviamon.anim'))

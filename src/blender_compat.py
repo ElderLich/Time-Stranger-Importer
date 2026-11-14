@@ -72,6 +72,21 @@ def create_nla_track(armature_obj, action, track_name, start_frame, scale=1.0, b
     strip = track.strips.new(action.name, int(start_frame), action)
     if slot is not None:
         strip.action_slot = slot
+    # Blender initially chooses a slot when constructing the strip. A glTF
+    # action may retain an empty object slot before its animated pose slot;
+    # assigning the correct slot afterwards does not expand the 0..1 range.
+    # Set its source range explicitly from the selected owner, preserving a
+    # native clip's manually declared duration (including static holds).
+    if action.use_frame_range:
+        source_start, source_end = action.frame_range
+    else:
+        frames = [point.co.x for curve in iter_action_fcurves(action, armature_obj, slot)
+                  for point in curve.keyframe_points]
+        source_start, source_end = (min(frames), max(frames)) if frames else (0, 1)
+    strip.action_frame_start = source_start
+    strip.action_frame_end = max(source_start + 1, source_end)
+    strip.frame_start = start_frame
+    strip.frame_end = start_frame + max(1, source_end - source_start)
     strip.scale = scale
     strip.blend_type = blend_type
     if ad.action == action:

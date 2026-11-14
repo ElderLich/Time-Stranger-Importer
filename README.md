@@ -15,7 +15,7 @@ with a New Century model-conversion workflow and cinematic preview tools.
 | Time Stranger `.anim` | Bone motion and indexed float channels | One clip, NLA tracks, or an NC moveset |
 | New Century `.glb` | Skinned model, bind pose, root motion and clips | Through a native TS donor `.geom` |
 | Textures | `.img`, `.dds`, `.png` | Game-ready `.img` DDS with mipmaps, or PNG |
-| Native camera rig | `cam_*.geom` + neighboring `.anim` | Edited motion; original camera GEOM/NLST retained |
+| Native camera rig | `cam_*.geom` + neighboring `.anim` | Motion channels, FOV and clip planes; unknown data retained |
 | Cinematic preview JSON | Source actor, sampled camera/FOV and sound cues | Blender scene; no native TS effect package |
 
 **Tested:** Windows x64, Blender **5.1.2** and **5.3.0**. The add-on targets the
@@ -71,9 +71,10 @@ before exporting. Camera/material float channels remain visible as
 ## Cameras & effects
 
 **Native cameras:** import a file such as Lucemon CM's `cam_chr039_bs01_pc.geom`.
-Its animation rig is editable, while the camera's original binary records and
-name list are preserved. Changing the rest rig or authoring native lens fields
-is not supported yet.
+Its motion channels are editable. The DSTS sidebar exposes native vertical FOV
+and near/far clip planes; unknown records and the name list are preserved.
+Animated lens channels can override static FOV. Changing the rest rig or adding
+new native camera records is not supported yet.
 
 **New Century cinematics:** import a `dsts-cinematic-preview-v1` JSON through
 **New Century Cinematic Preview**. A separate scene contains the source actor,

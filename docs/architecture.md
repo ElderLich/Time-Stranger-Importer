@@ -2,7 +2,7 @@
 
 ## What was rewritten in 1.3
 
-The proven binary serializers and New Century bind-pose conversion are retained.
+The binary serializers and source inverse bind matrices are retained.
 The Blender-facing animation and mesh export paths are rebuilt around explicit
 data ownership and testable conversion functions.
 
@@ -12,7 +12,7 @@ data ownership and testable conversion functions.
 | `src/animation.py` | Shared animation import, sampled vector/quaternion export, duration, masks and opaque float channels. |
 | `src/mesh.py` | Convert per-corner Blender attributes into seam-split GEOM vertices; filter/normalize skin weights. |
 | `src/scene_state.py` | Track newly created datablocks; roll back imports without deleting unrelated user data. |
-| `src/native_camera.py` | Preserve camera GEOM/NLST bytes and expose its skeletal motion for `.anim` editing. |
+| `src/native_camera.py` | Preserve camera GEOM/NLST data; edit proven FOV and clipping fields without rewriting unknown sections. |
 | `src/cinematic.py` | Import a source-backed NC camera/audio preview into a separate scene. |
 | `src/nc_glb.py` | Preserve NC bind poses, root motion and DSTS bone-location semantics; borrow donor material metadata. |
 | `src/backend.py` | Load the geometry extension using CPython's supported ABI suffixes. |
@@ -32,6 +32,14 @@ data ownership and testable conversion functions.
   exact action slot and trim range. Reversed, repeated, time-remapped and
   multi-strip tracks require an explicit bake instead of silently exporting
   just their first action.
+- Creating an NLA strip before choosing its layered pose slot could retain the
+  empty first slot's 0–1 interval. Sixteen real Leviamon clips then exported only
+  two frames. Strip creation now sets the selected slot's full source range.
+- Rebuilding the NC root changed its children's rest basis while retaining their
+  previous local quaternions. The native reimport rotated the model relative to
+  its cinematic camera. Conversion now captures source world poses first and
+  solves every target basis against the final hierarchy and bone flags. All 17
+  Leviamon clips reconstruct within 0.0000076 matrix units before compression.
 - Mesh export collapsed UV, split-normal, color and tangent seams onto the
   first corner of each Blender vertex. Export now splits by the full corner
   tuple and retains the original skin influences.
@@ -70,10 +78,16 @@ serializers; native geometry still requires the extension.
 Native `cam_chr039_bs01_pc.geom` (Lucemon Chaos Mode) has a camera section that
 the legacy C++ writer cannot emit. Import retains its complete original GEOM
 and NLST in collection properties, imports the skeleton and neighboring ANIM,
-and allows animation editing. Geometry export is byte-preserving and refuses a
-changed rest rig. The seven camera parameter floats are available for research;
-their optical meaning has not been established, so no editable native lens
-writer is claimed. Mixed mesh/light/camera GEOM files are rejected.
+and allows motion-channel editing. Geometry export refuses a changed rest rig.
+Pinned native runtime evidence establishes **56-byte** camera records (the
+single-camera fixture's 64-byte section includes 8 alignment bytes):
+`0x1402E05E0` copies the file records and resolves the bone hash;
+`0x1402E2D80` reads FOV degrees at +4, near at +12 and far at +16;
+`0x1405018E0` constructs a vertical-FOV frustum. These three fields are editable
+in the sidebar and patched in place. Other bytes remain unchanged. Native base
+camera ANIM files use absolute pose channels; the research staging codec handles
+that separately from ordinary skeletal skill deltas. Mixed mesh/light/camera
+GEOM files are rejected.
 
 `dsts-cinematic-preview-v1` is a preview interchange, not a game effect format.
 It supplies a source actor GLB/clip, frame rate/origin, sampled Unity camera
@@ -119,7 +133,7 @@ constructing their curves. The new adapter replaces those behaviors and tests
 both import and export against native animation files.
 
 Romstar's DSCS camera record is 48 bytes and reads a projection integer at
-offset `0x18`; the inspected Time Stranger Lucemon camera record is 64 bytes and
+offset `0x18`; native evidence proves Time Stranger uses 56-byte records and
 has a float value of 25.4 there. Its DSCS camera helper therefore cannot be used
 as a verified Time Stranger lens decoder. The Time Stranger import path does
 not call that camera helper. This is why native camera records remain preserved
