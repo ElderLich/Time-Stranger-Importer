@@ -254,189 +254,97 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
 
 def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotation(math.radians(-90), 4, 'X')):
     mesh = mesh_obj.data
-    
-    # -- GEOMETRY --
-    positions = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
-    mesh.vertices.foreach_get("co", positions)
-    positions = positions.reshape(-1, 3)
+    if any(mod.type != 'ARMATURE' and (mod.show_viewport or mod.show_render) for mod in mesh_obj.modifiers):
+        raise ValueError(f"Mesh '{mesh.name}' has unapplied modifiers; apply them before export")
+    if mesh.shape_keys and any(abs(key.value) > 1e-7 for key in mesh.shape_keys.key_blocks):
+        raise ValueError(f"Mesh '{mesh.name}' has active shape keys; bake them before export")
+    if not mesh.vertices or not mesh.polygons:
+        raise ValueError(f"Mesh '{mesh.name}' has no surface geometry")
+    if any(p.material_index != 0 for p in mesh.polygons):
+        raise ValueError(f"Mesh '{mesh.name}' uses several materials; split by material before export")
+    mesh.calc_loop_triangles()
+    loop_vertex = np.array([loop.vertex_index for loop in mesh.loops], dtype=np.int32)
+    normals = np.array([normal.vector[:] for normal in mesh.corner_normals], dtype=np.float32)
+    uv_arrays = {n: np.array([item.uv[:] for item in mesh.uv_layers[f"uv{n}"].data], dtype=np.float32)
+                 for n in range(1, 4) if f"uv{n}" in mesh.uv_layers}
+    colors = None
+    if "Color" in mesh.color_attributes:
+        attribute = mesh.color_attributes["Color"]
+        raw_colors = np.array([item.color[:] for item in attribute.data], dtype=np.float32)
+        colors = raw_colors[loop_vertex] if attribute.domain == 'POINT' else raw_colors
+    tangents = None
+    if 1 in uv_arrays:
+        if any(len(p.vertices) > 4 for p in mesh.polygons):
+            raise ValueError(f"Mesh '{mesh.name}' has n-gons; triangulate them before export")
+        mesh.calc_tangents(uvmap="uv1")
+        tangents = np.array([(*loop.tangent, loop.bitangent_sign) for loop in mesh.loops], dtype=np.float32)
 
-    vertex_count = len(positions)
-
-    mat = np.array(coord_transform)
-    positions = positions @ mat[:3, :3].T + mat[:3, 3]
-
+    # GEOM has a single vertex index for every attribute. Blender has separate
+    # corner normals/UVs/colors: split vertices only where those corners differ.
+    columns = [loop_vertex[:, None], normals]
+    columns.extend(uv_arrays.values())
+    if colors is not None:
+        columns.append(colors)
+    if tangents is not None:
+        columns.append(tangents)
+    _, representatives, remap = np.unique(np.concatenate(columns, axis=1), axis=0,
+                                           return_index=True, return_inverse=True)
+    source_vertices = loop_vertex[representatives]
+    vertex_count = len(representatives)
     if vertex_count > 0xFFFF:
-        raise ValueError('Too many vertices')
+        raise ValueError(f"Mesh '{mesh.name}' needs {vertex_count} seam-split vertices (limit 65535)")
+    transform = np.array(coord_transform, dtype=np.float32)
+    positions = np.array([v.co[:] for v in mesh.vertices], dtype=np.float32)[source_vertices]
+    positions = positions @ transform[:3, :3].T + transform[:3, 3]
 
-    indices = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
-    mesh.loop_triangles.foreach_get("vertices", indices)
-    
-    triangle_primitive = 1
+    def transform_directions(values):
+        values = values @ transform[:3, :3].T
+        lengths = np.linalg.norm(values, axis=1, keepdims=True)
+        return values / np.maximum(lengths, 1e-20)
 
     mesh_out = dsts_formats.Mesh()
     mesh_out.set_vertex_count(vertex_count)
-    mesh_out.set_position(positions)
-    mesh_out.indices = indices
-    mesh_out.primitive = triangle_primitive
+    mesh_out.set_position(positions.astype(np.float32))
+    mesh_out.indices = remap[np.array([loop for tri in mesh.loop_triangles for loop in tri.loops])].astype(np.int32)
+    mesh_out.primitive = 1
+    mesh_out.set_normal(transform_directions(normals[representatives]).astype(np.float16))
+    present_uv_channels = set(uv_arrays)
+    uv1_coords = uv_arrays[1][representatives] if 1 in uv_arrays else None
+    for n, values in uv_arrays.items():
+        mesh_out.set_uv(n, values[representatives].astype(np.float32))
+    if colors is not None:
+        mesh_out.set_color(np.rint(np.clip(colors[representatives], 0, 1) * 255).astype(np.uint8))
+    if tangents is not None:
+        selected = tangents[representatives]
+        selected[:, :3] = transform_directions(selected[:, :3])
+        mesh_out.set_tangent(selected.astype(np.float16))
 
-    loop_index = np.empty(len(mesh.loops), dtype=np.int32)
-    mesh.loops.foreach_get("vertex_index", loop_index)
-    _, v_index = np.unique(loop_index, return_index=True)
-
-    # -- NORMALS --
-    if mesh.has_custom_normals:
-        loop_normals = np.empty(len(mesh.loops) * 3, dtype=np.float32)
-        mesh.loops.foreach_get("normal", loop_normals)
-        loop_normals = loop_normals.reshape(-1, 3)
-
-        vert_normals = np.zeros((len(mesh.vertices), 3), dtype=np.float32)
-
-        vert_normals[loop_index[v_index]] = loop_normals[v_index]
-
-        if coord_transform and isinstance(coord_transform, Matrix):
-            mat_rot = np.array(coord_transform)[:3, :3]
-            vert_normals = vert_normals @ mat_rot.T
-            lengths = np.linalg.norm(vert_normals, axis=1, keepdims=True)
-            lengths[lengths == 0] = 1
-            vert_normals = vert_normals / lengths  
-
-        mesh_out.set_normal(vert_normals.astype(np.float16))
-
-    # -- UVS --
-    # Track which uv channels the mesh actually carries and keep uv1's coords so
-    # any declared-but-missing overlay channel (uv2/uv3) can be filled from uv1
-    # after the material's DSTS_Data vertex layout is known (see AUTO-UV below).
-    present_uv_channels = set()
-    uv1_coords = None
-    for layer in mesh.uv_layers:
-        for n in range(1,4):
-            if f"uv{n}" == layer.name:
-                loop_uvs = np.empty(len(mesh.loops) * 2, dtype=np.float32)
-                layer.data.foreach_get("uv", loop_uvs)
-                loop_uvs = loop_uvs.reshape(-1, 2)
-
-                vert_uvs = np.zeros((len(mesh.vertices), 2), dtype=np.float32)
-
-                vert_uvs[loop_index[v_index]] = loop_uvs[v_index]
-
-                mesh_out.set_uv(n, vert_uvs)
-                present_uv_channels.add(n)
-                if n == 1:
-                    uv1_coords = vert_uvs
-
-    # -- COLORS --
-    if "Color" in mesh.color_attributes:
-        color =  mesh.color_attributes["Color"].data
-
-        loop_colors = np.empty(len(mesh.loops) * 4, dtype=np.float32)
-        color.foreach_get("color", loop_colors)
-        loop_colors = np.clip(loop_colors* 255, 0, 255).astype(np.uint8)
-        loop_colors = loop_colors.reshape(-1, 4)
-
-        vert_colors = np.zeros((len(mesh.vertices), 4), dtype=np.uint8)
-        vert_colors[loop_index[v_index]] = loop_colors[v_index]
-
-        mesh_out.set_color(vert_colors)
-
-    # -- TANGENTS --
-    if "uv1" in mesh.uv_layers:
-        # Check if all faces are tris/quads before calculating tangents
-        has_ngons = any(len(p.vertices) > 4 for p in mesh.polygons)
-        
-        if has_ngons:
-            # Triangulate the mesh temporarily for tangent calculation
-            import bmesh
-            bm = bmesh.new()
-            bm.from_mesh(mesh)
-            bmesh.ops.triangulate(bm, faces=bm.faces[:])
-            
-            # Create a temporary mesh for tangent calculation
-            temp_mesh = bpy.data.meshes.new("_temp_tangent_mesh")
-            bm.to_mesh(temp_mesh)
-            bm.free()
-            
-            temp_mesh.calc_tangents(uvmap="uv1")
-            
-            # Build mapping from original vertices to temp mesh loops
-            temp_loop_index = np.empty(len(temp_mesh.loops), dtype=np.int32)
-            temp_mesh.loops.foreach_get("vertex_index", temp_loop_index)
-            _, temp_v_index = np.unique(temp_loop_index, return_index=True)
-            
-            loop_tangents = np.empty(len(temp_mesh.loops) * 3, dtype=np.float32)
-            loop_tangent_signs = np.empty(len(temp_mesh.loops), dtype=np.float32)
-            temp_mesh.loops.foreach_get("tangent", loop_tangents)
-            temp_mesh.loops.foreach_get("bitangent_sign", loop_tangent_signs)
-            loop_tangents = loop_tangents.reshape(-1, 3)
-            
-            # Map to vertices using temp mesh indices
-            vert_tangents_3 = np.zeros((len(mesh.vertices), 3), dtype=np.float32)
-            vert_tangent_signs = np.zeros(len(mesh.vertices), dtype=np.float32)
-            vert_tangents_3[temp_loop_index[temp_v_index]] = loop_tangents[temp_v_index]
-            vert_tangent_signs[temp_loop_index[temp_v_index]] = loop_tangent_signs[temp_v_index]
-            
-            # Clean up temp mesh
-            bpy.data.meshes.remove(temp_mesh)
-            
-            if coord_transform and isinstance(coord_transform, Matrix):
-                mat_rot = np.array(coord_transform)[:3, :3]
-                vert_tangents_3 = vert_tangents_3 @ mat_rot.T
-                lengths = np.linalg.norm(vert_tangents_3, axis=1, keepdims=True)
-                lengths[lengths == 0] = 1
-                vert_tangents_3 = vert_tangents_3 / lengths
-            
-            vert_tangents = np.column_stack([vert_tangents_3, vert_tangent_signs])
-        else:
-            mesh.calc_tangents(uvmap="uv1")
-            
-            loop_tangents = np.empty(len(mesh.loops) * 3, dtype=np.float32)
-            loop_tangent_signs = np.empty(len(mesh.loops), dtype=np.float32)
-            mesh.loops.foreach_get("tangent", loop_tangents)
-            mesh.loops.foreach_get("bitangent_sign", loop_tangent_signs)
-            loop_tangents = loop_tangents.reshape(-1, 3)
-
-            if coord_transform and isinstance(coord_transform, Matrix):
-                mat_rot = np.array(coord_transform)[:3, :3]
-                loop_tangents = loop_tangents @ mat_rot.T
-                lengths = np.linalg.norm(loop_tangents, axis=1, keepdims=True)
-                lengths[lengths == 0] = 1
-                loop_tangents = loop_tangents / lengths
-
-            loop_tangents = np.column_stack([loop_tangents, loop_tangent_signs])
-
-            vert_tangents = np.zeros((len(mesh.vertices), 4), dtype=np.float32)
-            vert_tangents[loop_index[v_index]] = loop_tangents[v_index]
-
-        mesh_out.set_tangent(vert_tangents.astype(np.float16))
-
-    # -- WEIGHTS --
     if skeleton is not None:
         mesh_out.matrix_palette = [b for b in skeleton.bones if b.name in mesh_obj.vertex_groups]
-        name_to_id = {b.name:i for i,b in enumerate(mesh_out.matrix_palette)}
-
-        # Limit to 4 groups per vertex (game format limitation)
-        max_groups = 4
-        groups_per_vertex = min(max([len(v.groups) for v in mesh.vertices]), max_groups)
-        
-        vert_indices = np.zeros((len(mesh_obj.data.vertices), groups_per_vertex), dtype=np.uint8)
-        vert_weights = np.zeros((len(mesh_obj.data.vertices), groups_per_vertex), dtype=np.float32)
-
-        for vi, v in enumerate(mesh_obj.data.vertices):
-            # Get all groups for this vertex, sorted by weight (descending)
-            vertex_groups = [(g.group, g.weight) for g in v.groups]
-            vertex_groups.sort(key=lambda x: x[1], reverse=True)
-            
-            # Take only the top 4 groups
-            for gi, (group_idx, weight) in enumerate(vertex_groups[:max_groups]):
-                group_name = mesh_obj.vertex_groups[group_idx].name
-                if group_name in name_to_id:
-                    vert_indices[vi, gi] = name_to_id[group_name]
-                    vert_weights[vi, gi] = weight
-            
-            # Normalize weights so they sum to 1.0 (prevents shadow bugs in game)
-            total = vert_weights[vi].sum()
-            if total > 0:
-                vert_weights[vi] /= total
-
+        if len(mesh_out.matrix_palette) > 256:
+            raise ValueError(f"Mesh '{mesh.name}' has more than 256 palette bones")
+        name_to_id = {b.name: i for i, b in enumerate(mesh_out.matrix_palette)}
+        group_to_id = {g.index: name_to_id[g.name] for g in mesh_obj.vertex_groups if g.name in name_to_id}
+        weights_by_vertex = []
+        for v in mesh.vertices:
+            # Ignore non-bone groups BEFORE selecting the four strongest influences.
+            weights = sorted(((group_to_id[g.group], g.weight) for g in v.groups
+                              if g.group in group_to_id and g.weight > 0),
+                             key=lambda item: -item[1])[:4]
+            weights_by_vertex.append(weights)
+        groups_per_vertex = max((len(weights_by_vertex[i]) for i in source_vertices), default=0)
+        if not groups_per_vertex:
+            raise ValueError(f"Mesh '{mesh.name}' has no weights referencing its armature")
+        vert_indices = np.zeros((vertex_count, groups_per_vertex), dtype=np.uint8)
+        vert_weights = np.zeros((vertex_count, groups_per_vertex), dtype=np.float32)
+        for vi, source in enumerate(source_vertices):
+            weights = weights_by_vertex[source]
+            if not weights:
+                raise ValueError(f"Mesh '{mesh.name}' vertex {source} has no bone weights")
+            total = sum(weight for _, weight in weights)
+            for gi, (index, weight) in enumerate(weights):
+                vert_indices[vi, gi] = index
+                vert_weights[vi, gi] = weight / total
         mesh_out.set_index(vert_indices)
         mesh_out.set_weight(vert_weights.astype(np.float16))
 

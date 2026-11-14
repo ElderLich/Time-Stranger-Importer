@@ -110,10 +110,39 @@ def _texture_search_dirs(geom_path, images_folder=None):
         add(base / "images")
         if depth == 0:
             add(base)
+        for shared in ("patch", "patch.dx11", "app_0", "app_0.dx11"):
+            add(base / shared / "images")
     return dirs
 
 
 def import_geom(context, filepath, images_folder=None):
+    from .scene_state import snapshot, rollback
+    import struct
+    raw = Path(filepath).read_bytes()
+    if len(raw) < 0xB0 or struct.unpack_from('<I', raw)[0] != 316:
+        raise ValueError('Expected a complete Time Stranger GEOM v316 header')
+    if struct.unpack_from('<H', raw, 8)[0]:
+        raise ValueError('This GEOM contains native lights; light import/export is not implemented')
+    for offset in (0x48, 0x50, 0x58, 0x60, 0x68, 0x78, 0x80, 0x90, 0x98):
+        pointer = struct.unpack_from('<Q', raw, offset)[0]
+        if pointer > len(raw):
+            raise ValueError(f'GEOM section pointer at {offset:#x} exceeds the file size')
+    before = snapshot()
+    active = context.view_layer.objects.active
+    selected = list(context.selected_objects)
+    try:
+        return _import_geom(context, filepath, images_folder)
+    except Exception:
+        if context.object and context.object.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        rollback(before)
+        for obj in selected:
+            obj.select_set(True)
+        context.view_layer.objects.active = active
+        raise
+
+
+def _import_geom(context, filepath, images_folder=None):
     dsts_formats, material, mesh, skeleton, utils = load_format_modules()
 
     error_state_old = dsts_formats.get_throw_errors()
@@ -138,6 +167,9 @@ def import_geom(context, filepath, images_folder=None):
         else:
             armature_obj = skeleton_result
             bone_name_map = {}
+
+        from .native_camera import preserve_camera_source
+        is_camera = preserve_camera_source(new_collection, armature_obj, filepath)
 
         texture_search_dirs = [str(p) for p in _texture_search_dirs(Path(filepath), images_folder)]
         new_collection["DSTS_texture_search_dirs"] = "\n".join(texture_search_dirs)
@@ -171,9 +203,14 @@ def import_geom(context, filepath, images_folder=None):
                     at.count, at.offset, at.atype, at.dtype = attr.values()
 
         error_list = dsts_formats.get_error_list()
-        error_list = [e for e in error_list if "float channels" not in e.lower() and "ibpm does not match" not in e.lower()]
+        error_list = [e for e in error_list if "float channels" not in e.lower() and "ibpm does not match" not in e.lower()
+                      and not (is_camera and "camera data" in e.lower())]
         if error_list:
-            bpy.ops.wm.show_errors_window('INVOKE_DEFAULT', errors="\n\n".join(error_list))
+            new_collection['DSTS_import_warnings'] = '\n'.join(error_list)
+            if bpy.app.background:
+                print('[DSTS] Import warnings:', '\n'.join(error_list))
+            else:
+                bpy.ops.wm.show_errors_window('INVOKE_DEFAULT', errors="\n\n".join(error_list))
 
         import_animations_for_geom(filepath, armature_obj)
         return new_collection
@@ -217,56 +254,11 @@ def import_animations_for_geom(geom_filepath, armature_obj):
 
 
 def _import_animation_to_nla(armature_obj, anim_name, anim_data, bone_names):
-    action = bpy.data.actions.new(anim_name)
-    fps = 1
-
-    for bone_idx, bone_name in enumerate(bone_names):
-        if bone_idx >= anim_data.bone_count:
-            break
-
-        if bone_idx in anim_data.rotations:
-            rotations = anim_data.rotations[bone_idx]
-            if rotations:
-                for quat_idx in range(4):
-                    fc = create_action_fcurve(
-                        action, armature_obj,
-                        data_path=f'pose.bones["{bone_name}"].rotation_quaternion',
-                        index=quat_idx, group_name=bone_name,
-                    )
-                    for frame, rot in rotations.items():
-                        blender_quat = [rot[3], rot[0], rot[1], rot[2]]
-                        kf = fc.keyframe_points.insert(float(fps * frame + 1), blender_quat[quat_idx])
-                        kf.interpolation = 'BEZIER'
-
-        if bone_idx in anim_data.positions:
-            positions = anim_data.positions[bone_idx]
-            if positions:
-                for pos_idx in range(3):
-                    fc = create_action_fcurve(
-                        action, armature_obj,
-                        data_path=f'pose.bones["{bone_name}"].location',
-                        index=pos_idx, group_name=bone_name,
-                    )
-                    for frame, pos in positions.items():
-                        kf = fc.keyframe_points.insert(float(fps * frame + 1), pos[pos_idx])
-                        kf.interpolation = 'LINEAR'
-
-        if bone_idx in anim_data.scales:
-            scales = anim_data.scales[bone_idx]
-            if scales:
-                for scale_idx in range(3):
-                    fc = create_action_fcurve(
-                        action, armature_obj,
-                        data_path=f'pose.bones["{bone_name}"].scale',
-                        index=scale_idx, group_name=bone_name,
-                    )
-                    for frame, scl in scales.items():
-                        kf = fc.keyframe_points.insert(float(fps * frame + 1), scl[scale_idx])
-                        kf.interpolation = 'LINEAR'
-
-    start_frame = int(action.frame_range[0]) if action.frame_range[0] > 0 else 1
-    scale = 24.0 / anim_data.playback_rate if anim_data.playback_rate > 0 else 1.0
-    create_nla_track(armature_obj, action, anim_name, start_frame, scale=scale, blend_type='COMBINE')
+    from .animation import build_action
+    from .blender_compat import scene_fps
+    action = build_action(armature_obj, anim_name, anim_data, bone_names)
+    scale = scene_fps(bpy.context.scene) / anim_data.playback_rate if anim_data.playback_rate > 0 else 1.0
+    create_nla_track(armature_obj, action, anim_name, 1, scale=scale, blend_type='COMBINE')
 
 
 def export_geom(collection):
@@ -288,12 +280,26 @@ def export_geom(collection):
     geom.clut = base64.b64decode(bytes(collection["CLUT"], "ascii"))
 
     armatures = [o for o in collection.objects if o.type == "ARMATURE"]
-    if not armatures:
-        raise ValueError("No armature found in collection")
+    if len(armatures) != 1:
+        raise ValueError("A Geom collection must contain exactly one armature")
     geom.skeleton = skeleton.export_skeleton(armatures[0])
 
+    if 'DSTS_camera_source' in collection:
+        from .native_camera import PreservedCameraGeom
+        if collection.children or any(obj != armatures[0] for obj in collection.objects):
+            raise ValueError('Native camera GEOM export supports only its original rig; remove added objects/collections')
+        return PreservedCameraGeom(collection, armatures[0], geom.skeleton)
+
     name_to_mat = {}
-    for mat in {o.data.materials[0] for o in collection.objects if o.type == "MESH"}:
+    meshes = [o for o in collection.objects if o.type == "MESH"]
+    materials = []
+    for obj in meshes:
+        if not obj.data.materials or obj.data.materials[0] is None:
+            raise ValueError(f"Mesh '{obj.name}' has no export material")
+        mat = obj.data.materials[0]
+        if mat not in materials:
+            materials.append(mat)
+    for mat in materials:
         mat_data = material.export_material(mat)
         geom.materials.append(mat_data)
         name_to_mat[mat_data.name] = mat_data
@@ -311,13 +317,15 @@ def export_geom(collection):
 
 
 def export_textures(collection, output_dir, as_png=False):
-    import numpy as np
+    from .material import texture_stem
 
     images_dir = os.path.join(output_dir, "images")
     os.makedirs(images_dir, exist_ok=True)
 
     exported = []
     processed_images = set()
+    stems = {}
+    failures = []
 
     for obj in collection.objects:
         if obj.type != "MESH" or not obj.data.materials:
@@ -333,17 +341,23 @@ def export_textures(collection, output_dir, as_png=False):
                             if img.name in processed_images:
                                 continue
                             processed_images.add(img.name)
-                            tex_name = os.path.splitext(img.name)[0]
                             try:
+                                tex_name = texture_stem(img)
+                                if tex_name in stems and stems[tex_name] != img:
+                                    raise ValueError(f'Different images resolve to {tex_name!r}; give them distinct texture names')
+                                stems[tex_name] = img
                                 if as_png:
                                     output_path = os.path.join(images_dir, tex_name + ".png")
                                     export_image_as_png(img, output_path)
                                 else:
-                                    output_path = os.path.join(images_dir, tex_name + ".dds")
+                                    output_path = os.path.join(images_dir, tex_name + ".img")
                                     export_image_as_dds(img, output_path)
                                 exported.append(tex_name)
                             except Exception as e:
-                                print(f"[DSTS] Warning: Failed to export texture {tex_name}: {e}")
+                                failures.append(f'{img.name}: {e}')
+
+    if failures:
+        raise RuntimeError('Texture export incomplete:\n' + '\n'.join(failures))
 
     return exported
 
@@ -351,21 +365,22 @@ def export_textures(collection, output_dir, as_png=False):
 def export_image_as_dds(image, output_path):
     import numpy as np
 
-    if image.packed_file:
+    if image.packed_file and not image.is_dirty:
         data = image.packed_file.data
         if data[:4] == b'DDS ':
             with open(output_path, 'wb') as f:
                 f.write(data)
             return
 
-    if image.filepath:
+    if image.filepath and not image.is_dirty:
         src_path = bpy.path.abspath(image.filepath)
         if os.path.isfile(src_path):
             with open(src_path, 'rb') as f:
                 header = f.read(4)
             if header == b'DDS ':
                 import shutil
-                shutil.copy2(src_path, output_path)
+                if os.path.normcase(os.path.abspath(src_path)) != os.path.normcase(os.path.abspath(output_path)):
+                    shutil.copy2(src_path, output_path)
                 return
 
     width = image.size[0]
@@ -375,19 +390,35 @@ def export_image_as_dds(image, output_path):
 
     pixels = np.array(image.pixels[:], dtype=np.float32).reshape((height, width, 4))
     pixels = np.flipud(pixels)
-    pixels_8bit = (pixels * 255).astype(np.uint8)
-    pixels_bgra = pixels_8bit.copy()
-    pixels_bgra[:, :, 0] = pixels_8bit[:, :, 2]
-    pixels_bgra[:, :, 2] = pixels_8bit[:, :, 0]
+    mip_data = []
+    while True:
+        encoded = pixels.copy()
+        # Filter scene-linear pixels, then encode colour RGB for the DDS.
+        if image.colorspace_settings.name == 'sRGB':
+            rgb = np.maximum(encoded[:, :, :3], 0)
+            encoded[:, :, :3] = np.where(rgb <= 0.0031308, rgb * 12.92,
+                                         1.055 * np.power(rgb, 1 / 2.4) - 0.055)
+        encoded = np.rint(np.clip(encoded, 0, 1) * 255).astype(np.uint8)
+        mip_data.append(encoded[:, :, [2, 1, 0, 3]].tobytes())
+        h, w = pixels.shape[:2]
+        if h == 1 and w == 1:
+            break
+        next_h, next_w = max(1, h // 2), max(1, w // 2)
+        # Sample paired source texels; replicate the sole row/column at 1px.
+        y = np.minimum(np.arange(next_h) * 2, h - 1)
+        x = np.minimum(np.arange(next_w) * 2, w - 1)
+        pixels = (pixels[y[:, None], x] + pixels[np.minimum(y + 1, h - 1)[:, None], x]
+                  + pixels[y[:, None], np.minimum(x + 1, w - 1)]
+                  + pixels[np.minimum(y + 1, h - 1)[:, None], np.minimum(x + 1, w - 1)]) * .25
 
     dds_header = bytearray(128)
     dds_header[0:4] = b'DDS '
     dds_header[4:8] = (124).to_bytes(4, 'little')
-    dds_header[8:12] = (0x1 | 0x2 | 0x4 | 0x1000 | 0x8).to_bytes(4, 'little')
+    dds_header[8:12] = (0x1 | 0x2 | 0x4 | 0x1000 | 0x8 | 0x20000).to_bytes(4, 'little')
     dds_header[12:16] = height.to_bytes(4, 'little')
     dds_header[16:20] = width.to_bytes(4, 'little')
     dds_header[20:24] = (width * 4).to_bytes(4, 'little')
-    dds_header[28:32] = (1).to_bytes(4, 'little')
+    dds_header[28:32] = len(mip_data).to_bytes(4, 'little')
     dds_header[76:80] = (32).to_bytes(4, 'little')
     dds_header[80:84] = (0x1 | 0x40).to_bytes(4, 'little')
     dds_header[88:92] = (32).to_bytes(4, 'little')
@@ -395,11 +426,12 @@ def export_image_as_dds(image, output_path):
     dds_header[96:100] = (0x0000FF00).to_bytes(4, 'little')
     dds_header[100:104] = (0x000000FF).to_bytes(4, 'little')
     dds_header[104:108] = (0xFF000000).to_bytes(4, 'little')
-    dds_header[108:112] = (0x1000).to_bytes(4, 'little')
+    dds_header[108:112] = (0x1000 | (0x400008 if len(mip_data) > 1 else 0)).to_bytes(4, 'little')
 
     with open(output_path, 'wb') as f:
         f.write(dds_header)
-        f.write(pixels_bgra.tobytes())
+        for level in mip_data:
+            f.write(level)
 
 
 def export_image_as_png(image, output_path):

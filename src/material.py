@@ -431,6 +431,18 @@ def resolve_material(collection, mat, mat_data, tex_folder):
 
     links.new(group_node.outputs["Shader"], output.inputs["Surface"])
 
+def texture_stem(image):
+    if image is None:
+        raise ValueError('DSTS texture node has no image assigned')
+    name = image.name
+    # Blender's global datablock suffix is not part of a game texture name.
+    name = re.sub(r'(?i)(\.(?:img|dds|png))\.\d{3}$', r'\1', name)
+    stem = Path(name).stem if Path(name).suffix.lower() in {'.img', '.dds', '.png'} else name
+    if not stem or any(c in stem for c in '/\\:*?"<>|'):
+        raise ValueError(f'Invalid texture filename: {stem!r}')
+    return stem
+
+
 def export_material(mat):
     if dsts_formats is None:
         raise RuntimeError(
@@ -449,7 +461,7 @@ def export_material(mat):
         elif type(node) == bpy.types.ShaderNodeTexImage and node.label.startswith("DSTS-"):
             uniform = dsts_formats.ShaderUniform()
             uniform.parameter_name = node.label[5:]
-            uniform.value = Path(node.image.name).stem
+            uniform.value = texture_stem(node.image)
             uniform.unknown_0xC = node['unknown_0xC']
 
             mat_out.uniforms.append(uniform)

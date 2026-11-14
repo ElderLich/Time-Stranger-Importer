@@ -12,13 +12,14 @@ from bpy_extras.io_utils import ImportHelper, ExportHelper
 from bpy.props import StringProperty, EnumProperty, BoolProperty, FloatProperty
 from bpy.types import Operator, Panel
 from mathutils import Matrix
-from .src.blender_compat import create_action_fcurve, create_nla_track, iter_action_fcurves
+from .src.blender_compat import create_action_fcurve, create_nla_track, iter_action_fcurves, scene_fps
+from .src.animation import single_strip, animation_path, validate_strip
 
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 2, 26),
-    "blender": (4, 5, 0),
+    "version": (1, 3, 0),
+    "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
     "location": "File > Import/Export",
@@ -220,9 +221,9 @@ def _apply_armature_object_transforms(context, collection):
     _ensure_object_mode(context)
     changed = 0
 
-    # Standard DSTS import parents the armature ("root") to a +90° "chr###"
-    # orientation empty and gives it a -90° LOCAL rotation, so its WORLD transform
-    # is identity (upright). transform_apply() here would BAKE that -90° into every
+    # Standard DSTS import parents the armature ("root") to a +90Â° "chr###"
+    # orientation empty and gives it a -90Â° LOCAL rotation, so its WORLD transform
+    # is identity (upright). transform_apply() here would BAKE that -90Â° into every
     # bone's rest pose, flipping the exported skeleton from Z-up to Y-up and
     # deforming the model in-game (while still looking correct in Blender). The
     # correct move is to CLEAR THE PARENT while keeping the world transform: the
@@ -242,7 +243,7 @@ def _apply_armature_object_transforms(context, collection):
             changed += 1
 
     # Bake only armatures that STILL carry a genuine (non-parented) non-identity
-    # world transform — a real user rotation/scale that belongs in the bone data.
+    # world transform â€” a real user rotation/scale that belongs in the bone data.
     to_bake = [a for a in _objects_with_unapplied_transforms(collection, {"ARMATURE"})
                if not _matrix_is_identity(a.matrix_world)]
     if to_bake:
@@ -673,7 +674,7 @@ def _seed_rest_pose_into_action(armature, action, frame=1.0):
     """Insert one rest-pose (identity basis) key per pose bone into ``action``.
 
     Mirrors Romstar's ``add_rest_pose_to_base_anim``: the base action is NOT a
-    truly empty/keyframeless action — it carries a rest-pose key for every bone
+    truly empty/keyframeless action â€” it carries a rest-pose key for every bone
     so the exported ``.anim`` supplies the bind pose the engine attaches meshes
     to. Keying identity basis (loc 0, rot identity, scale 1) encodes the rest
     pose regardless of how the armature is currently posed. Returns the bone count.
@@ -898,80 +899,16 @@ def _rename_primary_uvs_to_uv1(collection):
     return renamed, skipped
 
 
-def build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=30.0):
-    from .src.anim import AnimFileHundredLine
-
+def build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=30.0, slot=None, frame_range=None):
+    from .src.animation import build_from_action
+    anim_file = build_from_action(armature_obj, action, playback_rate, slot, frame_range)
     bone_names = [bone.name for bone in armature_obj.data.bones]
-    bone_count = len(bone_names)
-    bone_index_by_name = {}
-    for index, name in enumerate(bone_names):
-        bone_index_by_name[name] = index
-        cleaned = re.sub(r"(\.[0-9]{3})?$", "", name).strip().lower()
-        bone_index_by_name.setdefault(cleaned, index)
-
-    anim_file = AnimFileHundredLine()
-    anim_file.playback_rate = playback_rate
-    anim_file.bone_count = bone_count
-    anim_file.float_channel_count = 0
-    anim_file.bone_blend_factors = [255] * bone_count
-    anim_file.float_channel_blend_factors = []
-
-    for bone_idx in range(bone_count):
-        anim_file.rotations[bone_idx] = {}
-        anim_file.positions[bone_idx] = {}
-        anim_file.scales[bone_idx] = {}
-
-    action_frame_start = int(action.frame_range[0]) if action.frame_range else 1
-    for fcurve in iter_action_fcurves(action):
-        data_path = getattr(fcurve, "data_path", "")
-        match = _ACTION_BONE_RE.search(data_path)
-        if not match:
-            continue
-        bone_name = match.group(1)
-        bone_idx = bone_index_by_name.get(bone_name)
-        if bone_idx is None:
-            cleaned = re.sub(r"(\.[0-9]{3})?$", "", bone_name).strip().lower()
-            bone_idx = bone_index_by_name.get(cleaned)
-        if bone_idx is None:
-            continue
-
-        array_index = int(getattr(fcurve, "array_index", 0))
-        for keyframe in getattr(fcurve, "keyframe_points", []):
-            frame_anim = int(keyframe.co[0]) - action_frame_start
-            if frame_anim < 0:
-                continue
-            value = float(keyframe.co[1])
-            if "rotation_quaternion" in data_path:
-                if not 0 <= array_index < 4:
-                    continue
-                if frame_anim not in anim_file.rotations[bone_idx]:
-                    anim_file.rotations[bone_idx][frame_anim] = [0.0, 0.0, 0.0, 1.0]
-                if array_index == 0:
-                    anim_file.rotations[bone_idx][frame_anim][3] = value
-                else:
-                    anim_file.rotations[bone_idx][frame_anim][array_index - 1] = value
-            elif "location" in data_path:
-                if not 0 <= array_index < 3:
-                    continue
-                if frame_anim not in anim_file.positions[bone_idx]:
-                    anim_file.positions[bone_idx][frame_anim] = [0.0, 0.0, 0.0]
-                anim_file.positions[bone_idx][frame_anim][array_index] = value
-            elif "scale" in data_path:
-                if not 0 <= array_index < 3:
-                    continue
-                if frame_anim not in anim_file.scales[bone_idx]:
-                    anim_file.scales[bone_idx][frame_anim] = [1.0, 1.0, 1.0]
-                anim_file.scales[bone_idx][frame_anim][array_index] = value
-
-    # Root-motion fix: NC glb imports (and hand-made actions) can carry the
-    # rig's world motion on the ARMATURE OBJECT's transform channels, which the
-    # per-bone loop above silently drops. Compose it onto the root bone track.
-    _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names, action_frame_start)
-
+    _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names,
+                                     float((frame_range or action.frame_range)[0]), slot=slot)
     return anim_file
 
 
-def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names, action_frame_start):
+def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names, action_frame_start, slot=None):
     """Fold object-level animation of ``action`` into the root bone's tracks.
 
     TS .anim files know nothing about object transforms: they store per-bone
@@ -999,7 +936,7 @@ def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names
 
     # Only object curves living alongside the pose curves (same action slot)
     # belong to this armature; other slots animate other objects.
-    _pose_slot, slot_fcurves = _pose_slot_and_fcurves(action)
+    slot_fcurves = list(iter_action_fcurves(action, armature_obj, slot))
     if not slot_fcurves:
         return False
     object_fcurves = {}
@@ -1017,28 +954,7 @@ def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names
     rest_root = root_bone.matrix_local.copy()
     rest_root_inv = rest_root.inverted()
 
-    # Existing root deltas (from the per-bone loop) evaluated via the action's
-    # own pose F-Curves so interpolation matches Blender.
-    base_path = f'pose.bones["{root_bone.name}"]'
-    pose_fcurves = {}
-    for fc in slot_fcurves:
-        data_path = str(getattr(fc, "data_path", ""))
-        if data_path.startswith(base_path):
-            pose_fcurves[(data_path, int(getattr(fc, "array_index", 0)))] = fc
-
-    def _pose_value(channel, index, frame, default):
-        fc = pose_fcurves.get((f"{base_path}.{channel}", index))
-        return fc.evaluate(frame) if fc is not None else default
-
-    frames = set(anim_file.rotations[root_idx]) | set(anim_file.positions[root_idx]) | set(anim_file.scales[root_idx])
-    for fc in object_fcurves.values():
-        for keyframe in getattr(fc, "keyframe_points", []):
-            frame_anim = int(keyframe.co[0]) - action_frame_start
-            if frame_anim >= 0:
-                frames.add(frame_anim)
-    if not frames:
-        frames = {0}
-
+    frames = range(anim_file.frame_count)
     obj_defaults = _channel_defaults(armature_obj)
     rotation_mode = armature_obj.rotation_mode
     parent_world = armature_obj.parent.matrix_world.copy() if armature_obj.parent else Matrix.Identity(4)
@@ -1052,26 +968,10 @@ def _compose_object_motion_onto_root(armature_obj, action, anim_file, bone_names
         object_basis = object_basis_matrix_from_fcurves(obj_defaults, rotation_mode, object_fcurves, frame_abs)
         object_world = parent_world @ parent_inverse @ object_basis
 
-        old_loc = Vector((
-            _pose_value("location", 0, frame_abs, 0.0),
-            _pose_value("location", 1, frame_abs, 0.0),
-            _pose_value("location", 2, frame_abs, 0.0),
-        ))
-        old_quat = Quaternion((
-            _pose_value("rotation_quaternion", 0, frame_abs, 1.0),
-            _pose_value("rotation_quaternion", 1, frame_abs, 0.0),
-            _pose_value("rotation_quaternion", 2, frame_abs, 0.0),
-            _pose_value("rotation_quaternion", 3, frame_abs, 0.0),
-        ))
-        if old_quat.magnitude > 1e-8:
-            old_quat.normalize()
-        else:
-            old_quat = Quaternion((1.0, 0.0, 0.0, 0.0))
-        old_scale = Vector((
-            _pose_value("scale", 0, frame_abs, 1.0),
-            _pose_value("scale", 1, frame_abs, 1.0),
-            _pose_value("scale", 2, frame_abs, 1.0),
-        ))
+        old_loc = Vector(anim_file.positions[root_idx].get(frame_anim, [0, 0, 0]))
+        native_quat = anim_file.rotations[root_idx].get(frame_anim, [0, 0, 0, 1])
+        old_quat = Quaternion((native_quat[3], *native_quat[:3]))
+        old_scale = Vector(anim_file.scales[root_idx].get(frame_anim, [1, 1, 1]))
         old_delta = (
             Matrix.Translation(old_loc)
             @ old_quat.to_matrix().to_4x4()
@@ -1166,7 +1066,7 @@ class DSTS_OT_GeomExport(Operator, ExportHelper):
     )
     export_textures_as_png: BoolProperty(
         name="Export as PNG",
-        description="Export textures as PNG files instead of .dds (DDS) format",
+        description="Export textures as PNG files instead of .img (DDS) format",
         default=False,
     )
 
@@ -1205,19 +1105,23 @@ class DSTS_OT_GeomExport(Operator, ExportHelper):
         if export_note:
             self.report({'WARNING'}, export_note)
 
-        with open(os.path.splitext(self.filepath)[0] + ".nlst", "wb") as f:
-            f.write(write_nlst(geom).encode("utf-8"))
+        try:
+            with open(os.path.splitext(self.filepath)[0] + ".nlst", "wb") as f:
+                f.write(write_nlst(geom).encode("utf-8"))
 
-        if self.export_textures:
-            output_dir = os.path.dirname(self.filepath)
-            exported_textures = export_textures(collection, output_dir, as_png=self.export_textures_as_png)
-            if exported_textures:
-                fmt = "PNG" if self.export_textures_as_png else "DDS"
-                self.report({'INFO'}, f"Exported: {self.filepath} + {len(exported_textures)} {fmt} texture(s)")
+            if self.export_textures:
+                output_dir = os.path.dirname(self.filepath)
+                exported_textures = export_textures(collection, output_dir, as_png=self.export_textures_as_png)
+                if exported_textures:
+                    fmt = "PNG" if self.export_textures_as_png else "DDS"
+                    self.report({'INFO'}, f"Exported: {self.filepath} + {len(exported_textures)} {fmt} texture(s)")
+                else:
+                    self.report({'INFO'}, f"Exported: {self.filepath} (no textures found)")
             else:
-                self.report({'INFO'}, f"Exported: {self.filepath} (no textures found)")
-        else:
-            self.report({'INFO'}, f"Exported: {self.filepath}")
+                self.report({'INFO'}, f"Exported: {self.filepath}")
+        except Exception as exc:
+            self.report({'ERROR'}, f"Geometry exported, but a dependent file failed: {exc}")
+            return {'CANCELLED'}
         return {'FINISHED'}
 
     def invoke(self, context, event):
@@ -1336,81 +1240,43 @@ def fetch_nla_tracks(self, context):
 
 
 def _build_anim_action_from_data(armature_obj, anim_name, anim_data, bone_names):
-    """Build a pose action from parsed .anim data without creating an NLA track."""
-    action = bpy.data.actions.new(anim_name)
-    fps = 1
-
-    for bone_idx, bone_name in enumerate(bone_names):
-        if bone_idx >= anim_data.bone_count:
-            break
-
-        if bone_idx in anim_data.rotations:
-            rotations = anim_data.rotations[bone_idx]
-            if rotations:
-                for quat_idx in range(4):
-                    fc = create_action_fcurve(
-                        action, armature_obj,
-                        data_path=f'pose.bones["{bone_name}"].rotation_quaternion',
-                        index=quat_idx, group_name=bone_name,
-                    )
-                    for frame, rot in rotations.items():
-                        blender_quat = [rot[3], rot[0], rot[1], rot[2]]
-                        kf = fc.keyframe_points.insert(float(fps * frame + 1), blender_quat[quat_idx])
-                        kf.interpolation = 'BEZIER'
-
-        if bone_idx in anim_data.positions:
-            positions = anim_data.positions[bone_idx]
-            if positions:
-                for pos_idx in range(3):
-                    fc = create_action_fcurve(
-                        action, armature_obj,
-                        data_path=f'pose.bones["{bone_name}"].location',
-                        index=pos_idx, group_name=bone_name,
-                    )
-                    for frame, pos in positions.items():
-                        kf = fc.keyframe_points.insert(float(fps * frame + 1), pos[pos_idx])
-                        kf.interpolation = 'LINEAR'
-
-        if bone_idx in anim_data.scales:
-            scales = anim_data.scales[bone_idx]
-            if scales:
-                for scale_idx in range(3):
-                    fc = create_action_fcurve(
-                        action, armature_obj,
-                        data_path=f'pose.bones["{bone_name}"].scale',
-                        index=scale_idx, group_name=bone_name,
-                    )
-                    for frame, scl in scales.items():
-                        kf = fc.keyframe_points.insert(float(fps * frame + 1), scl[scale_idx])
-                        kf.interpolation = 'LINEAR'
-
-    return action
+    from .src.animation import build_action
+    return build_action(armature_obj, anim_name, anim_data, bone_names)
 
 
 def _build_anim_action_and_nla(armature_obj, anim_name, anim_data, bone_names, replace_existing=False):
-    """Build a pose action from parsed .anim data and push it as an NLA track.
-
-    Single source of truth shared by the .anim import operator and the one-click
-    "Import Donor Animations" button. Retargets by bone order (anim bone_idx →
-    armature.data.bones[bone_idx]). When replace_existing is True, an NLA track of
-    the same name (and its now-orphaned action) is removed FIRST so re-running does
-    not stack duplicate tracks or leave the new action auto-suffixed ".001".
-    """
-    if replace_existing and armature_obj.animation_data:
-        for track in list(armature_obj.animation_data.nla_tracks):
-            if track.name == anim_name:
-                strip_actions = [s.action for s in track.strips if s.action]
-                armature_obj.animation_data.nla_tracks.remove(track)
-                for old_action in strip_actions:
-                    if old_action.users == 0:
-                        bpy.data.actions.remove(old_action)
-
-    action = _build_anim_action_from_data(armature_obj, anim_name, anim_data, bone_names)
-    start_frame = int(action.frame_range[0]) if action.frame_range[0] > 0 else 1
-    scale = 24.0 / anim_data.playback_rate if anim_data.playback_rate > 0 else 1.0
-    # (Any pre-existing same-named track was already removed at the top when
-    # replace_existing is set, so the new action keeps its clean name.)
-    create_nla_track(armature_obj, action, anim_name, start_frame, scale=scale, blend_type='COMBINE')
+    """Stage a valid replacement before removing an existing working clip."""
+    ad = armature_obj.animation_data or armature_obj.animation_data_create()
+    previous_action, previous_slot = ad.action, getattr(ad, 'action_slot', None)
+    old_tracks = [t for t in ad.nla_tracks if replace_existing and t.name == anim_name]
+    before_tracks = set(ad.nla_tracks)
+    before_actions = set(bpy.data.actions)
+    try:
+        action = _build_anim_action_from_data(armature_obj, anim_name, anim_data, bone_names)
+        start_frame = int(action.frame_range[0]) if action.frame_range[0] > 0 else 1
+        scale = scene_fps(bpy.context.scene) / anim_data.playback_rate if anim_data.playback_rate > 0 else 1.0
+        new_track, _ = create_nla_track(armature_obj, action, anim_name, start_frame,
+                                        scale=scale, blend_type='COMBINE')
+    except Exception:
+        for track in list(ad.nla_tracks):
+            if track not in before_tracks:
+                ad.nla_tracks.remove(track)
+        ad.action = previous_action
+        if previous_slot is not None:
+            ad.action_slot = previous_slot
+        for created in list(bpy.data.actions):
+            if created not in before_actions and created.users == 0:
+                bpy.data.actions.remove(created)
+        raise
+    for track in old_tracks:
+        old_actions = [strip.action for strip in track.strips if strip.action]
+        ad.nla_tracks.remove(track)
+        for old_action in old_actions:
+            if old_action != action and old_action.users == 0:
+                bpy.data.actions.remove(old_action)
+    if old_tracks:
+        new_track.name = anim_name
+        action.name = anim_name
     return action
 
 
@@ -1545,7 +1411,7 @@ class DSTS_OT_ImportDonorAnimations(Operator):
         stem = _normalize_chr_stem(self.source_chr)[0]
         folder = os.path.dirname(donor_path)
         # Match "<stem>.anim" (the base) and "<stem>_<clip>.anim", but NOT a longer
-        # stem like chr0500 — the char after the stem must be "_" or ".".
+        # stem like chr0500 â€” the char after the stem must be "_" or ".".
         pattern = re.compile(r'^' + re.escape(stem) + r'(_.*)?\.anim$', re.IGNORECASE)
         try:
             anim_files = sorted(f for f in os.listdir(folder) if pattern.match(f))
@@ -1617,17 +1483,9 @@ class DSTS_OT_AnimExport(Operator, ExportHelper):
             self.report({'ERROR'}, f"NLA track '{self.nla_track_name}' not found or empty")
             return {'CANCELLED'}
 
-        nla_strip = nla_track.strips[0]
-        action = nla_strip.action
-        if not action:
-            self.report({'ERROR'}, "NLA strip has no action")
-            return {'CANCELLED'}
-
-        playback_rate = 24.0 / nla_strip.scale if nla_strip.scale > 0 else 30.0
-        anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
-
         try:
-            anim_file.to_file(self.filepath)
+            nla_strip = single_strip(nla_track)
+            _export_action_as_anim(armature_obj, nla_strip.action, nla_strip, self.filepath)
             self.report({'INFO'}, f"Exported animation to {self.filepath}")
         except Exception as e:
             self.report({'ERROR'}, f"Failed to export: {str(e)}")
@@ -1679,15 +1537,10 @@ class DSTS_OT_AnimExportAll(Operator):
                 continue
             if not nla_track.strips:
                 continue
-            nla_strip = nla_track.strips[0]
-            action = nla_strip.action
-            if not action:
-                continue
-            playback_rate = 24.0 / nla_strip.scale if nla_strip.scale > 0 else 30.0
-            anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
-            filepath = os.path.join(self.directory, nla_track.name + ".anim")
             try:
-                anim_file.to_file(filepath)
+                nla_strip = single_strip(nla_track)
+                filepath = animation_path(self.directory, nla_track.name)
+                _export_action_as_anim(armature_obj, nla_strip.action, nla_strip, filepath)
                 exported_count += 1
             except Exception as e:
                 print(f"[DSTS] Failed to export {nla_track.name}: {e}")
@@ -1697,14 +1550,16 @@ class DSTS_OT_AnimExportAll(Operator):
             self.report({'INFO'}, f"Exported {exported_count} animation(s) to {self.directory}")
         if failed_count > 0:
             self.report({'WARNING'}, f"Failed to export {failed_count} animation(s)")
-        if exported_count == 0 and failed_count == 0:
-            self.report({'WARNING'}, "No animations to export")
+        if exported_count == 0:
+            self.report({'WARNING'}, "No animations were exported")
             return {'CANCELLED'}
         return {'FINISHED'}
 
 
 def _build_rest_pose_anim_file(armature_obj, playback_rate=30.0):
     """Build the stem.anim rest-pose file from the current export armature."""
+    ad = armature_obj.animation_data or armature_obj.animation_data_create()
+    previous_action, previous_slot = ad.action, getattr(ad, 'action_slot', None)
     action = bpy.data.actions.new(f"{armature_obj.name}_rest_export")
     try:
         if _seed_rest_pose_into_action(armature_obj, action, frame=1.0) == 0:
@@ -1715,6 +1570,9 @@ def _build_rest_pose_anim_file(armature_obj, playback_rate=30.0):
             playback_rate=playback_rate,
         )
     finally:
+        ad.action = previous_action
+        if previous_slot is not None:
+            ad.action_slot = previous_slot
         if action.users == 0:
             bpy.data.actions.remove(action)
 
@@ -1814,60 +1672,59 @@ def _find_track_by_names(tracks, names):
 
 
 def _export_action_as_anim(armature_obj, action, strip, filepath):
-    playback_rate = 24.0 / strip.scale if strip and strip.scale > 0 else 30.0
-    anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
+    validate_strip(strip)
+    playback_rate = scene_fps(bpy.context.scene) / strip.scale if strip and strip.scale > 0 else 30.0
+    anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate, slot=strip.action_slot, frame_range=(strip.action_frame_start, strip.action_frame_end))
     anim_file.to_file(filepath)
 
 
 def _build_sequence_action_from_tracks(armature_obj, name, tracks):
-    action = bpy.data.actions.new(name)
-    current_frame = 0.0
-    copied_curves = 0
-    playback_rates = []
-
+    import math
+    from .src.animation import _write_curve
+    playback_rate = scene_fps(bpy.context.scene)
+    sources, keys = [], set()
     for track in tracks:
-        strip = track.strips[0] if track and track.strips else None
-        source_action = strip.action if strip else None
-        if source_action is None:
-            continue
-        playback_rates.append(24.0 / strip.scale if strip.scale > 0 else 30.0)
-        start = float(source_action.frame_range[0])
-        end = float(source_action.frame_range[1])
-        for source_fc in iter_action_fcurves(source_action):
-            data_path = getattr(source_fc, "data_path", "")
-            if not (
-                data_path.startswith("pose.bones")
-                or data_path in _SEQUENCE_OBJECT_TRANSFORM_PATHS
-            ):
-                continue
-            array_index = int(getattr(source_fc, "array_index", 0))
-            group_name = getattr(getattr(source_fc, "group", None), "name", "") or ""
-            dest_fc = create_action_fcurve(
-                action,
-                armature_obj,
-                data_path=data_path,
-                index=array_index,
-                group_name=group_name,
-            )
-            for keyframe in getattr(source_fc, "keyframe_points", []):
-                frame = current_frame + (float(keyframe.co.x) - start)
-                key = dest_fc.keyframe_points.insert(frame, float(keyframe.co.y), options={'FAST'})
-                key.interpolation = getattr(keyframe, "interpolation", "LINEAR")
-            dest_fc.update()
-            copied_curves += 1
-        current_frame += max(1.0, end - start + 1.0)
-
-    if copied_curves == 0:
+        strip = single_strip(track)
+        curves = {(fc.data_path, fc.array_index): fc
+                  for fc in iter_action_fcurves(strip.action, armature_obj, strip.action_slot)
+                  if fc.data_path.startswith('pose.bones') or fc.data_path in _SEQUENCE_OBJECT_TRANSFORM_PATHS
+                  or fc.data_path.startswith('["DSTS_float_')}
+        keys.update(curves)
+        sources.append((strip, curves))
+    if not keys:
+        raise RuntimeError(f"No supported transform curves found for sequence {name}")
+    samples = {key: [] for key in keys}
+    current_frame = 1
+    for strip, curves in sources:
+        start, end = strip.action_frame_start, strip.action_frame_end
+        source_rate = scene_fps(bpy.context.scene) / strip.scale
+        count = max(1, math.ceil((end - start) * playback_rate / source_rate) + 1)
+        for path, component in keys:
+            curve = curves.get((path, component))
+            default = 1.0 if path.endswith('scale') or (path.endswith('rotation_quaternion') and component == 0) else 0.0
+            for i in range(count):
+                source_frame = min(end, start + i * source_rate / playback_rate)
+                value = curve.evaluate(source_frame) if curve else default
+                samples[(path, component)].append((current_frame + i, value))
+        current_frame += count - 1
+    ad = armature_obj.animation_data or armature_obj.animation_data_create()
+    previous_action, previous_slot = ad.action, getattr(ad, 'action_slot', None)
+    action = bpy.data.actions.new(name)
+    try:
+        for (path, component), values in samples.items():
+            _write_curve(action, armature_obj, path, component, values, 'Sequence')
+        return action, playback_rate
+    except Exception:
+        ad.action = previous_action
+        if previous_slot is not None:
+            ad.action_slot = previous_slot
         if action.users == 0:
             bpy.data.actions.remove(action)
-        raise RuntimeError(f"No supported transform curves found for sequence {name}")
-    playback_rate = playback_rates[0] if playback_rates else 30.0
-    if any(abs(rate - playback_rate) > 1e-4 for rate in playback_rates[1:]):
-        print(
-            f"[DSTS] Warning: sequence {name} uses mixed playback rates "
-            f"{[round(rate, 4) for rate in playback_rates]}; using {playback_rate:.4f}"
-        )
-    return action, playback_rate
+        raise
+    finally:
+        ad.action = previous_action
+        if previous_slot is not None:
+            ad.action_slot = previous_slot
 
 
 def _try_export_sequence(armature_obj, tracks, ts_code, output_code, target_stem, directory):
@@ -1999,14 +1856,10 @@ class DSTS_OT_ExportNcMoveset(Operator):
                 missing.append(output_code)
                 continue
 
-            strip = track.strips[0]
-            action = strip.action
-            if not action:
-                missing.append(output_code)
-                continue
             filepath = os.path.join(self.directory, f"{target_stem}_{output_code}.anim")
             try:
-                _export_action_as_anim(armature_obj, action, strip, filepath)
+                strip = single_strip(track)
+                _export_action_as_anim(armature_obj, strip.action, strip, filepath)
                 exported.append(f"{output_code}<-{track.name}")
             except Exception as exc:
                 print(f"[DSTS] Failed to export {output_code} from {track.name}: {exc}")
@@ -2051,18 +1904,13 @@ def export_all_collection(collection, filepath, export_textures_as_png=False):
             for nla_track in armature_obj.animation_data.nla_tracks:
                 if not nla_track.strips:
                     continue
-                nla_strip = nla_track.strips[0]
-                action = nla_strip.action
-                if not action:
-                    continue
-                playback_rate = 24.0 / nla_strip.scale if nla_strip.scale > 0 else 30.0
-                anim_file = build_basic_hundred_line_anim_from_action(armature_obj, action, playback_rate=playback_rate)
-                anim_path = os.path.join(output_dir, nla_track.name + ".anim")
                 try:
-                    anim_file.to_file(anim_path)
+                    nla_strip = single_strip(nla_track)
+                    anim_path = animation_path(output_dir, nla_track.name)
+                    _export_action_as_anim(armature_obj, nla_strip.action, nla_strip, anim_path)
                     exported_anims += 1
                 except Exception as exc:
-                    print(f"[DSTS] Failed to export animation {nla_track.name}: {exc}")
+                    raise RuntimeError(f"Geometry was exported, but animation '{nla_track.name}' failed: {exc}") from exc
 
     results = [f"Geom: {filepath}", f"NLST: {nlst_path}"]
     if exported_textures:
@@ -2092,7 +1940,7 @@ class DSTS_OT_ExportAll(Operator, ExportHelper):
     )
     export_textures_as_png: BoolProperty(
         name="Export Textures as PNG",
-        description="Export textures as PNG files instead of .dds (DDS) format",
+        description="Export textures as PNG files instead of .img (DDS) format",
         default=False,
     )
 
@@ -2105,10 +1953,10 @@ class DSTS_OT_ExportAll(Operator, ExportHelper):
         layout.separator()
         tex_fmt = "PNG" if self.export_textures_as_png else "DDS"
         layout.label(text="Will export:")
-        layout.label(text="  • Geom file (.geom)")
-        layout.label(text="  • Name list (.nlst)")
-        layout.label(text=f"  • All textures (images/*.{tex_fmt.lower()})")
-        layout.label(text="  • All animations (.anim)")
+        layout.label(text="  â€¢ Geom file (.geom)")
+        layout.label(text="  â€¢ Name list (.nlst)")
+        layout.label(text=f"  â€¢ All textures (images/*.{tex_fmt.lower()})")
+        layout.label(text="  â€¢ All animations (.anim)")
 
     def execute(self, context):
         if self.collection_name == "__NONE__":
@@ -2500,7 +2348,7 @@ class DSTS_OT_BorrowMaterialSetup(Operator):
                 _set_material_vertex_layout_from_mesh(mat, donor_mesh)
                 # Also take the donor mesh's flag byte (isRendered/isWireframe/...)
                 # so a custom mesh exports the donor's flags instead of the
-                # hardcoded True,False×7 defaults — this is the "get the flags of
+                # hardcoded True,FalseÃ—7 defaults â€” this is the "get the flags of
                 # another model" step.
                 if _copy_mesh_flags_from_donor(obj.data, donor_mesh):
                     flags_copied += 1
@@ -2870,7 +2718,7 @@ class DSTS_PT_WorkflowPanel(Panel):
 
         box.separator()
         # Import all of the donor's animation clips onto the Geom armature as NLA
-        # tracks (borrowing materials/flags does NOT bring animations — this does).
+        # tracks (borrowing materials/flags does NOT bring animations â€” this does).
         anim = box.operator(DSTS_OT_ImportDonorAnimations.bl_idname, text="Import Donor Animations")
         anim.collection_name = collection_name
         anim.source_chr = scene.dsts_workflow_donor_chr
@@ -2883,7 +2731,7 @@ class DSTS_PT_WorkflowPanel(Panel):
         base.target_chr = target_chr
         base.replace_existing = scene.dsts_workflow_replace_actions
 
-        # Mesh flags for the active mesh — the TS .geom per-mesh flag byte. These
+        # Mesh flags for the active mesh â€” the TS .geom per-mesh flag byte. These
         # are populated by import or by Borrow Material Setup; shown here so the
         # user can SEE and tweak the flags they copied from a donor model.
         active = getattr(context, "object", None)
@@ -2899,7 +2747,7 @@ class DSTS_PT_WorkflowPanel(Panel):
                     if key in mesh_data.keys():
                         box.prop(mesh_data, f'["{key}"]', text=label_text)
             else:
-                box.label(text="No flags yet — Import or Borrow Material Setup", icon='INFO')
+                box.label(text="No flags yet â€” Import or Borrow Material Setup", icon='INFO')
 
         box = layout.box()
         box.label(text="Export Prep")
@@ -2947,6 +2795,26 @@ class DSTS_OT_ShowErrors(Operator):
 # SUBMENUS
 # =============================================================================
 
+class DSTS_OT_CinematicImport(Operator, ImportHelper):
+    """Open captured camera motion and audio in a separate preview scene"""
+    bl_idname = "import_scene.dsts_cinematic"
+    bl_label = "New Century Cinematic Preview"
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.cinematic.json;*.json", options={'HIDDEN'})
+    import_actor: BoolProperty(name="Import Source Actor", default=True)
+
+    def execute(self, context):
+        from .src.cinematic import import_preview
+        try:
+            scene = import_preview(context, self.filepath, self.import_actor)
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Created {scene.name}; effects remain source references")
+        return {'FINISHED'}
+
+
 class DSTS_MT_ImportSubmenu(bpy.types.Menu):
     """Digimon Time Stranger Import Submenu"""
     bl_idname = "DSTS_MT_import_submenu"
@@ -2958,6 +2826,7 @@ class DSTS_MT_ImportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_AnimImport.bl_idname, text="Animation (.anim)")
         layout.separator()
         layout.operator(DSTS_OT_NcGlbImport.bl_idname, text="New Century Model (.glb)")
+        layout.operator(DSTS_OT_CinematicImport.bl_idname, text="New Century Cinematic Preview (.json)")
 
 
 class DSTS_MT_ExportSubmenu(bpy.types.Menu):
@@ -2988,6 +2857,7 @@ def menu_func_export(self, context):
 # =============================================================================
 
 CLASSES = (
+    DSTS_OT_CinematicImport,
     DSTS_OT_GeomImport,
     DSTS_OT_GeomExport,
     DSTS_OT_NcGlbImport,

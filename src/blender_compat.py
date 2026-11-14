@@ -1,65 +1,79 @@
-"""Compatibility helpers for Blender 4.x legacy actions and Blender 5.1 layers."""
+"""Feature-detected Blender action APIs (legacy and Blender 5.x slots)."""
 
 from __future__ import annotations
 
 
 def ensure_animation_data(obj):
-    if not obj.animation_data:
-        obj.animation_data_create()
-    return obj.animation_data
+    return obj.animation_data or obj.animation_data_create()
+
+
+def scene_fps(scene):
+    return float(scene.render.fps) / float(scene.render.fps_base or 1.0)
+
+
+def action_slot_for(action, datablock=None, slot=None):
+    """Resolve one owner's slot; never combine unrelated objects' channels."""
+    slots = list(getattr(action, "slots", ()))
+    if not slots:
+        return None
+    if slot is not None and slot in slots:
+        return slot
+    ad = getattr(datablock, "animation_data", None)
+    if ad and ad.action == action and getattr(ad, "action_slot", None) in slots:
+        return ad.action_slot
+    if datablock is not None:
+        identifier = "OB" + datablock.name if datablock.id_type == "OBJECT" else None
+        matches = [s for s in slots if s.identifier == identifier]
+        if len(matches) == 1:
+            return matches[0]
+        matches = [s for s in slots if s.target_id_type == datablock.id_type]
+        if len(matches) == 1:
+            return matches[0]
+    if len(slots) == 1:
+        return slots[0]
+    raise ValueError(f"Action '{action.name}' has multiple slots; select its owner's NLA strip")
 
 
 def create_action_fcurve(action, datablock, data_path, index=0, group_name=""):
-    """Return an F-Curve for ``action`` across Blender 4.x and 5.x APIs."""
-    ensure_animation_data(datablock)
-
+    ad = ensure_animation_data(datablock)
     if hasattr(action, "fcurve_ensure_for_datablock"):
-        if datablock.animation_data.action != action:
-            datablock.animation_data.action = action
+        if ad.action != action:
+            ad.action = action
         return action.fcurve_ensure_for_datablock(
-            datablock,
-            data_path,
-            index=index,
-            group_name=group_name or "",
+            datablock, data_path, index=index, group_name=group_name or "",
         )
+    fc = action.fcurves.find(data_path, index=index)
+    if fc is None:
+        fc = action.fcurves.new(data_path=data_path, index=index,
+                               action_group=group_name or "")
+    return fc
 
-    fcurve = action.fcurves.new(data_path=data_path, index=index)
-    if group_name and hasattr(action, "groups") and hasattr(fcurve, "group"):
-        group = action.groups.get(group_name) or action.groups.new(group_name)
-        fcurve.group = group
-    return fcurve
 
-
-def iter_action_fcurves(action):
-    """Yield all F-Curves from legacy or layered Blender actions."""
-    if hasattr(action, "fcurves"):
-        yield from action.fcurves
+def iter_action_fcurves(action, datablock=None, slot=None):
+    if action is None:
         return
-
-    for layer in getattr(action, "layers", ()):
-        for strip in getattr(layer, "strips", ()):
-            for channelbag in getattr(strip, "channelbags", ()):
-                yield from getattr(channelbag, "fcurves", ())
+    if getattr(action, "layers", None):
+        selected = action_slot_for(action, datablock, slot) if datablock is not None or slot is not None else None
+        for layer in action.layers:
+            for strip in layer.strips:
+                for bag in getattr(strip, "channelbags", ()):
+                    if selected is None or bag.slot_handle == selected.handle:
+                        yield from bag.fcurves
+    elif hasattr(action, "fcurves"):
+        yield from action.fcurves
 
 
 def create_nla_track(armature_obj, action, track_name, start_frame, scale=1.0, blend_type="COMBINE"):
-    """Create an NLA strip and wire the Blender 5.x action slot when present."""
-    anim_data = ensure_animation_data(armature_obj)
-    slot = getattr(anim_data, "action_slot", None)
-
-    track = anim_data.nla_tracks.new()
+    ad = ensure_animation_data(armature_obj)
+    slot = action_slot_for(action, armature_obj)
+    track = ad.nla_tracks.new()
     track.name = track_name
     track.mute = True
-
-    strip = track.strips.new(action.name, start_frame, action)
+    strip = track.strips.new(action.name, int(start_frame), action)
+    if slot is not None:
+        strip.action_slot = slot
     strip.scale = scale
     strip.blend_type = blend_type
-    if slot is not None and hasattr(strip, "action_slot"):
-        try:
-            strip.action_slot = slot
-        except RuntimeError:
-            pass
-
-    if anim_data.action == action:
-        anim_data.action = None
+    if ad.action == action:
+        ad.action = None
     return track, strip

@@ -74,7 +74,7 @@ class AnimFileHundredLine(AnimFile):
         max_rot_kf = max((max(self.rotations     [idx]) for idx in animated_rotations), default=0)
         max_scl_kf = max((max(self.scales        [idx]) for idx in animated_scales),    default=0)
         max_fcs_kf = max((max(self.float_channels[idx]) for idx in animated_fcs),       default=0)
-        max_kf = max((max_pos_kf, max_rot_kf, max_scl_kf, max_fcs_kf))
+        max_kf = max((max_pos_kf, max_rot_kf, max_scl_kf, max_fcs_kf, self.frame_count - 1))
         
         # Finish filling out the header
         binary.playback_rate           = self.playback_rate

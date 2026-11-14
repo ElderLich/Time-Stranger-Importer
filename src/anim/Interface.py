@@ -26,6 +26,7 @@ def chunk_bitvector(uint8_vector, chunksize):
 class AnimFile:
     def __init__(self):
         self.playback_rate       = 30.
+        self.frame_count = 1
         self.bone_count          = 0
         self.float_channel_count = 0
         self.bone_blend_factors          = []
@@ -48,6 +49,7 @@ class AnimFile:
         instance = cls()
         # Only need to take the playback rate; duration can be calculated from this and the total number of frames
         instance.playback_rate       = binary.playback_rate
+        instance.frame_count = binary.frame_count
         instance.bone_count          = binary.bone_count
         instance.float_channel_count = binary.float_channel_count
         instance.bone_blend_factors          = binary.bone_masks

@@ -102,18 +102,24 @@ def read_glb_chunks(filepath):
         header = handle.read(12)
         if len(header) < 12:
             raise NcImportError("File too short to be a .glb")
-        magic, _version, total = struct.unpack("<III", header)
-        if magic != 0x46546C67:  # 'glTF'
-            raise NcImportError("Not a binary glTF (.glb) file")
+        magic, version, total = struct.unpack("<III", header)
+        if magic != 0x46546C67 or version != 2:
+            raise NcImportError("Expected a binary glTF 2 (.glb) file")
+        if total != os.fstat(handle.fileno()).st_size:
+            raise NcImportError("GLB declared length does not match the file")
         gltf = None
         binary = b""
         while handle.tell() < total:
             chunk_header = handle.read(8)
             if len(chunk_header) < 8:
-                break
+                raise NcImportError("Truncated GLB chunk header")
             length, chunk_type = struct.unpack("<II", chunk_header)
+            if length % 4 or handle.tell() + length > total:
+                raise NcImportError("Invalid GLB chunk length")
             data = handle.read(length)
             if chunk_type == 0x4E4F534A:  # JSON
+                if gltf is not None:
+                    raise NcImportError("GLB contains more than one JSON chunk")
                 gltf = json.loads(data)
             elif chunk_type == 0x004E4942:  # BIN
                 binary = data
@@ -1035,22 +1041,6 @@ def _bake_actions_to_game_location_semantics(context, armature_obj, actions):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def _purge_orphans(skip_actions=True):
-    collections = [bpy.data.meshes, bpy.data.materials, bpy.data.images,
-                   bpy.data.armatures, bpy.data.node_groups]
-    if not skip_actions:
-        collections.append(bpy.data.actions)
-    for _ in range(4):
-        removed = 0
-        for collection in collections:
-            for block in list(collection):
-                if block.users == 0 and not block.use_fake_user:
-                    collection.remove(block)
-                    removed += 1
-        if removed == 0:
-            break
-
-
 def _select_only(context, objs, active=None):
     bpy.ops.object.select_all(action='DESELECT')
     for obj in objs:
@@ -1296,11 +1286,31 @@ def _build_outline_mesh(context, body_objects, armature_obj, outline_info, colle
 
 
 def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
+    from .scene_state import snapshot, rollback
+    before = snapshot()
+    fps, fps_base = context.scene.render.fps, context.scene.render.fps_base
+    active = context.view_layer.objects.active
+    selected = list(context.selected_objects)
+    try:
+        return _import_nc_model(context, filepath, donor_geom_path, build_outline, before)
+    except Exception:
+        if context.object and context.object.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        rollback(before)
+        context.scene.render.fps, context.scene.render.fps_base = fps, fps_base
+        for obj in selected:
+            obj.select_set(True)
+        context.view_layer.objects.active = active
+        raise
+
+
+def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
     """Import an NC model.glb into an export-ready Geom collection.
 
     Returns (collection, armature_object, notes) where notes is a list of
     warning strings for the operator to report.
     """
+    from .scene_state import purge_new_orphans
     notes = []
     if not os.path.isfile(filepath):
         raise NcImportError(f"File not found: {filepath}")
@@ -1369,7 +1379,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
                 bpy.data.actions.remove(action)
             except (ReferenceError, RuntimeError):
                 pass
-        _purge_orphans(skip_actions=True)
+        purge_new_orphans(before, skip_actions=True)
 
     new_objects, imported_actions = _run_gltf_import()
 
@@ -1625,6 +1635,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     # --- rebuild NLA tracks on the new armature --------------------------
     from .blender_compat import create_nla_track
     anim_data = new_armature.animation_data or new_armature.animation_data_create()
+    source_clip_names = {item.get('name', '') for item in gltf.get('animations', [])}
     for action in imported_actions:
         pose_slot, pose_fcurves = _pose_slot_and_fcurves(action)
         if not pose_fcurves:
@@ -1636,7 +1647,9 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             except Exception:
                 pass
         start, _end = _action_frame_span(action)
-        _track, strip = create_nla_track(new_armature, action, action.name, max(start, 1),
+        clip_name = action.name if action.name in source_clip_names else _base_name(action.name)
+        action['DSTS_source_clip'] = clip_name
+        _track, strip = create_nla_track(new_armature, action, clip_name, max(start, 1),
                                          scale=1.0, blend_type='REPLACE')
         try:
             strip.extrapolation = 'NOTHING'
@@ -1717,7 +1730,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
             bpy.data.objects.remove(obj, do_unlink=True)
         except (ReferenceError, RuntimeError):
             pass
-    _purge_orphans()
+    purge_new_orphans(before)
 
     # --- final placement + bookkeeping -------------------------------------
     for coll in list(new_armature.users_collection):
@@ -1734,7 +1747,7 @@ def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     for info in body_infos + ([outline_info] if outline_info else []):
         if info["material"]:
             info["material"].use_fake_user = False
-    _purge_orphans()
+    purge_new_orphans(before)
 
     # sanity: exporter preconditions
     for obj in collection.objects:

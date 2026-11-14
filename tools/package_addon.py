@@ -6,7 +6,7 @@ import zipfile
 
 
 PACKAGE_NAME = "Time_Stranger_Importer"
-PACKAGE_ROOTS = ("__init__.py", "data", "external", "src", "README.md", "LICENSE", "LICENSE.txt")
+PACKAGE_ROOTS = ("__init__.py", "data", "external", "src", "docs", "README.md", "LICENSE", "LICENSE.txt")
 REQUIRED_ROOTS = ("__init__.py", "data", "external", "src")
 SKIP_DIRS = {"__pycache__", ".pytest_cache"}
 SKIP_SUFFIXES = {".pyc", ".pyo"}

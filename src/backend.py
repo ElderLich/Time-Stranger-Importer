@@ -1,17 +1,7 @@
-"""Backend loading helpers for the compiled DSTS format module.
+"""Load geometry extensions matching the running Blender Python ABI/platform.
 
-The compiled ``dsts_formats`` backend is a pybind11 C++ extension that must
-match Blender's embedded Python version exactly (e.g. cp313 for Blender 5.1).
-
-To rebuild it:
-  1. Install VS2022 with the "Desktop development with C++" workload
-  2. Install Python 3.13 (matching Blender 5.1) with dev headers
-  3. pip install pybind11
-  4. cd dsts-formats-parser && cmake -B build && cmake --build build --config Release
-  5. Copy the resulting dsts_formats.cp313-win_amd64.pyd into this (src/) folder
-
-This reset package requires a matching .pyd. The earlier pure-Python custom
-reader/writer fallback was removed with the experimental custom-export tools.
+See docs/architecture.md for building another backend. The bundled Windows x64
+CPython 3.13 extension is verified in Blender 5.1.2 and 5.3.0.
 """
 
 from __future__ import annotations
@@ -27,24 +17,21 @@ def load_format_modules():
 
     Raises RuntimeError if no .pyd matching the current Python version is found.
     """
+    import importlib.machinery
     src_dir = Path(__file__).parent
     py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
-
-    available = sorted(src_dir.glob("dsts_formats*.pyd"))
-    if not available:
-        raise RuntimeError(
-            f"No compiled dsts_formats backend found in addon src/ folder. "
-            f"Blender {bpy.app.version_string} needs a {py_tag}-win_amd64.pyd. "
-            "See src/backend.py for build instructions."
-        )
-
-    matching = [p for p in available if py_tag in p.name]
+    # CPython owns platform/ABI suffix matching. Do not assume every Blender 5.x
+    # embeds the same Python release or that a similarly named DLL can load.
+    matching = [src_dir / ("dsts_formats" + suffix)
+                for suffix in importlib.machinery.EXTENSION_SUFFIXES
+                if (src_dir / ("dsts_formats" + suffix)).is_file()]
     if not matching:
-        found_tags = ", ".join(p.name for p in available)
+        available = sorted(p.name for p in src_dir.glob("dsts_formats*") if p.is_file())
         raise RuntimeError(
-            f"Compiled backend version mismatch: Blender {bpy.app.version_string} "
-            f"needs {py_tag}-win_amd64.pyd but found: {found_tags}. "
-            "See src/backend.py for build instructions."
+            f"Blender {bpy.app.version_string} embeds Python {sys.version_info.major}.{sys.version_info.minor}. "
+            f"No compatible {py_tag} dsts_formats extension is installed. "
+            f"Available: {', '.join(available) or 'none'}. "
+            "Install a backend built for this Python ABI and platform; see docs/architecture.md."
         )
 
     try:
