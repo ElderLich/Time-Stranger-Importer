@@ -22,7 +22,8 @@ def camera_transform(position, rotation):
 
 
 def import_preview(context, filepath, import_actor=True, *, import_camera=True,
-                   import_audio=True, import_effect_references=True):
+                   import_audio=True, import_effect_references=True,
+                   reset_actor=True, show_source_helpers=False):
     path = Path(filepath).resolve()
     source = json.loads(path.read_text(encoding='utf-8-sig'))
     if source.get('format') not in {'dsts-cinematic-preview-v1', 'dsts-cinematic-preview-v2'}:
@@ -81,6 +82,7 @@ def import_preview(context, filepath, import_actor=True, *, import_camera=True,
         scene['DSTS_preview_kind'] = source.get('phase_kind', 'showcase')
         scene['DSTS_preview_actor_clip'] = source.get('actor_clip', '')
         scene['DSTS_preview_actor_delay'] = delay
+        scene['DSTS_preview_reset_actor'] = reset_actor
         if actor_path:
             result = bpy.ops.import_scene.gltf(filepath=str(actor_path))
             if result != {'FINISHED'}:
@@ -107,9 +109,16 @@ def import_preview(context, filepath, import_actor=True, *, import_camera=True,
                     chosen.frame_start = 1 - origin + delay
                     chosen.frame_end = chosen.frame_start + length
                     chosen.extrapolation = 'NOTHING'
+                    if reset_actor:
+                        _reset_actor_with_source_idle(obj, chosen.frame_end, scene.frame_end, chosen)
                     assigned += 1
             if not assigned:
                 raise ValueError(f'Actor GLB has no unambiguous NLA clip {clip!r}')
+            for obj in scene.objects:
+                if obj.type == 'EMPTY':
+                    obj['DSTS_source_helper'] = True
+                    obj.hide_set(not show_source_helpers)
+                    obj.hide_render = True
 
         if samples:
             _import_camera(scene, camera_source, transforms)
@@ -142,6 +151,39 @@ def import_preview(context, filepath, import_actor=True, *, import_camera=True,
         bpy.data.scenes.remove(scene)
         rollback(before)
         raise
+
+
+def _reset_actor_with_source_idle(obj, start, horizon, selected):
+    """Use an existing captured idle clip outside an isolated attack preview.
+
+    This is an inspection-scene reset, not a native gameplay cast/target handoff.
+    Never synthesize a hold pose or alter the selected action/cue duration.
+    """
+    if start >= horizon:
+        return
+    ad = obj.animation_data
+    for name in ('stand', 'idle'):
+        candidates = [(track, strip) for track in ad.nla_tracks for strip in track.strips
+                      if strip != selected and strip.action and (strip.action.name == name or strip.action.name.startswith(name + '.'))]
+        if len(candidates) > 1:
+            raise ValueError(f'Actor has ambiguous source idle clip {name!r}')
+        if not candidates:
+            continue
+        track, strip = candidates[0]
+        duration = strip.action_frame_end - strip.action_frame_start
+        if duration <= 0:
+            raise ValueError(f'Source idle clip {name!r} has no duration')
+        strip.frame_start = start
+        strip.scale = 1
+        strip.repeat = max(1, math.ceil((horizon - start) / duration))
+        strip.extrapolation = 'NOTHING'
+        track.mute = False
+        obj['DSTS_preview_idle_clip'] = name
+        obj['DSTS_preview_idle_start'] = start
+        return
+    if obj.type == 'ARMATURE':
+        raise ValueError('No captured stand/idle clip is available for the preview reset; '
+                         'disable Reset to Source Idle to inspect the isolated motion without it')
 
 
 def _import_camera(scene, camera_source, transforms):

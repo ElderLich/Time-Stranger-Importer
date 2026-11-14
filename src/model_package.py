@@ -150,6 +150,8 @@ def plan_model_package(geom_path, resource_root=None, include_motions=True):
             if (directory/(path.stem+suffix)).exists():
                 raise ValueError(f'{path.stem}{suffix} requires an effect package; native SPRK/BSON packaging is not implemented')
     raw = path.read_bytes()
+    if raw[:4] == b'd\0\0\0':
+        raise ValueError('Cyber Sleuth GEOM v100 cannot be packaged as a Time Stranger model; native Cyber Sleuth export is not implemented')
     validate_matrix_alignment(raw, 0)
     meshes, materials, lights, cameras = struct.unpack_from('<4H', raw, 4)
     if not meshes or not materials or lights or cameras:

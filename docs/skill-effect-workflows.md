@@ -29,6 +29,13 @@ Actor and Animation** enabled is rejected; disabling that option allows its
 audio/effect records to be inspected without substituting a stand animation.
 The importer does not concatenate phases or claim concurrent native clocks.
 
+Version 1.4.2 uses the captured stand/idle clip after an isolated attack, avoiding
+the former fallback to the GLB bind pose. **Reset to Source Idle** controls this
+inspection reset. Static imported helper empty hierarchies are hidden by default;
+**Show Source Helper Hierarchy** exposes them. The user confirmed both requested
+skills reset correctly in the corrected project. Native cast/target handoff and
+rendered effect parity remain separate acceptance requirements.
+
 Source clips are placed at frame 1 plus their captured delay. Camera samples,
 sound cues and effect markers use the same origin. Source cameras and lens
 actions remain editable in Blender. Source effect records are explicitly
@@ -72,9 +79,13 @@ versions with the updated backend.
 
 These checks establish editing and serialization behavior. Full particle
 preview, socket lifecycle, emitter modules, refraction/billboards, native effect
-BSON timelines, lights, collision editing, full package dependencies and runtime
+BSON playback, lights, full package dependencies and runtime
 game acceptance remain incomplete. The model-only packager still rejects effect
 companions. No live Revision 14 asset is modified by these workflows.
+
+Bounded BSON timetable and native PHYS collision editors were added in 1.4.2;
+their workflow and remaining acceptance limits are documented in
+[native timeline and collision editing](native-timeline-collision.md).
 
 ## Maintained source and attribution
 

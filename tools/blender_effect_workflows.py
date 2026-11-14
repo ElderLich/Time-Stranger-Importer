@@ -139,16 +139,31 @@ with tempfile.TemporaryDirectory(prefix='dsts_effect_workflows_') as folder:
             assert scene.camera is None, 'Ordinary cast/approach must not inherit cinematic camera'
             expected = 135 if scene['DSTS_preview_actor_clip'] == 'skill2' else 71
             rigs = [obj for obj in scene.objects if obj.type == 'ARMATURE']
-            active = [strip for rig in rigs for track in rig.animation_data.nla_tracks if not track.mute for strip in track.strips]
+            active = [strip for rig in rigs for track in rig.animation_data.nla_tracks if not track.mute for strip in track.strips
+                      if strip.action.name.split('.')[0] == scene['DSTS_preview_actor_clip']]
             assert active and all(abs(strip.frame_end-strip.frame_start-expected) < .01 for strip in active)
             print('SOURCE_STRIPS', scene['DSTS_preview_actor_clip'], [(strip.frame_start, strip.frame_end, strip.action_frame_start, strip.action_frame_end) for strip in active])
             assert all(abs(strip.frame_start - 1) < .01 for strip in active)
             assert scene.frame_end >= expected + 1
             assert len(scene.timeline_markers) == 2
             assert len(scene.sequence_editor.strips) == 1
+            bpy.context.window.scene = scene
+            scene.frame_set(1)
+            rig = rigs[0]
+            start_z = rig.matrix_world.translation.z
+            scene.frame_set(expected + 2)
+            reset = rig.matrix_world.copy()
+            assert abs(reset.translation.z - start_z) < .1, (start_z, reset.translation.z)
+            scene.frame_set(scene.frame_end)
+            assert abs(rig.matrix_world.translation.z - start_z) < .1
+            scene.frame_set(expected + 2)
+            assert max(abs(reset[r][c] - rig.matrix_world[r][c]) for r in range(4) for c in range(4)) < 1e-6
+            assert rig.get('DSTS_preview_idle_clip') == 'stand'
+            assert all(obj.hide_get() for obj in scene.objects if obj.get('DSTS_source_helper'))
         primary_names = [scene.name for scene in scenes]
         cast = next(scene for scene in scenes if scene['DSTS_preview_actor_clip'] == 'skill2')
         bpy.context.window.scene = cast
+        cast.frame_set(1)
         # Remove only synthetic test data from the manual project.
         for obj in list(collection.objects):
             bpy.data.objects.remove(obj, do_unlink=True)

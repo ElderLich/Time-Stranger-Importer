@@ -71,7 +71,8 @@ def primary_phases(data):
 
 
 def import_related_skills(context, filepath, selection='__PRIMARY__', *, import_actor=True,
-                          import_camera=True, import_audio=True, import_effect_references=True):
+                          import_camera=True, import_audio=True, import_effect_references=True,
+                          reset_actor=True, show_source_helpers=False):
     data = catalog(filepath)
     phases = primary_phases(data) if selection == '__PRIMARY__' else [
         phase for phase in data['phases'] if phase['id'] == selection]
@@ -89,7 +90,8 @@ def import_related_skills(context, filepath, selection='__PRIMARY__', *, import_
                 manifest = Path(folder) / f'phase-{index}.json'
                 nc_preview_source.export_preview(data['model_dir'], phase, manifest)
                 scene = import_preview(context, manifest, import_actor, import_camera=import_camera,
-                                       import_audio=import_audio, import_effect_references=import_effect_references)
+                                       import_audio=import_audio, import_effect_references=import_effect_references,
+                                       reset_actor=reset_actor, show_source_helpers=show_source_helpers)
                 scene.name = phase_label(phase)
                 scene.dsts_nc_model_path = str(data['actor_path'])
                 scene['DSTS_preview_source_model'] = str(data['actor_path'])
@@ -119,6 +121,10 @@ class DSTS_OT_NcSkillImport(Operator, ImportHelper):
     import_audio: BoolProperty(name='Captured Audio', default=True)
     import_effect_references: BoolProperty(name='Effect Timeline References', default=True,
         description='Keep source effects and timing as inspection records; Unity particles are not rendered')
+    reset_actor: BoolProperty(name='Reset to Source Idle', default=True,
+        description='Play the captured stand/idle after this isolated motion so the preview does not fall back to the bind pose')
+    show_source_helpers: BoolProperty(name='Show Source Helper Hierarchy', default=False,
+        description='Show original GLB empty/socket trees; these include static duplicate prefab guides')
 
     def invoke(self, context, event):
         if context.scene.dsts_nc_model_path:
@@ -133,6 +139,8 @@ class DSTS_OT_NcSkillImport(Operator, ImportHelper):
         layout.prop(self, 'import_camera')
         layout.prop(self, 'import_audio')
         layout.prop(self, 'import_effect_references')
+        layout.prop(self, 'reset_actor')
+        layout.prop(self, 'show_source_helpers')
         layout.label(text='Cast and cinematic remain separate phases.', icon='INFO')
         layout.label(text='Unity particles/shaders are not yet translated.')
 
@@ -140,7 +148,8 @@ class DSTS_OT_NcSkillImport(Operator, ImportHelper):
         try:
             scenes = import_related_skills(context, self.filepath, self.phase,
                 import_actor=self.import_actor, import_camera=self.import_camera,
-                import_audio=self.import_audio, import_effect_references=self.import_effect_references)
+                import_audio=self.import_audio, import_effect_references=self.import_effect_references,
+                reset_actor=self.reset_actor, show_source_helpers=self.show_source_helpers)
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
@@ -164,6 +173,8 @@ class DSTS_PT_NcSkill(Panel):
             layout.label(text=f'Phase: {scene.get("DSTS_preview_kind", "showcase")}')
             layout.label(text='Camera: captured' if scene.camera else 'No captured camera in this phase')
             layout.label(text='Effect references are not rendered.', icon='INFO')
+            if scene.get('DSTS_preview_reset_actor'):
+                layout.label(text='After motion: captured stand/idle reset.')
 
 
 CLASSES = (DSTS_OT_NcSkillImport, DSTS_PT_NcSkill)

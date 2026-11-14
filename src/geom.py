@@ -266,6 +266,9 @@ def _import_animation_to_nla(armature_obj, anim_name, anim_data, bone_names):
 
 
 def export_geom(collection):
+    from .cyber_sleuth import is_cyber_sleuth, reject_export
+    if is_cyber_sleuth(collection) or any(is_cyber_sleuth(obj) for obj in collection.all_objects):
+        reject_export(collection)
     dsts_formats, material, mesh, skeleton, _utils = load_format_modules()
 
     missing_keys = [k for k in ("unknown_0x10", "unknown_0x30", "unknown_0x34", "CLUT") if k not in collection]

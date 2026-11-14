@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 4, 1),
+    "version": (1, 4, 2),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -2853,13 +2853,16 @@ class DSTS_OT_CinematicImport(Operator, ImportHelper):
     import_camera: BoolProperty(name="Import Captured Camera", default=True)
     import_audio: BoolProperty(name="Import Audio", default=True)
     import_effect_references: BoolProperty(name="Import Effect References", default=True)
+    reset_actor: BoolProperty(name="Reset to Source Idle", default=True)
+    show_source_helpers: BoolProperty(name="Show Source Helper Hierarchy", default=False)
 
     def execute(self, context):
         from .src.cinematic import import_preview
         try:
             scene = import_preview(context, self.filepath, self.import_actor,
                 import_camera=self.import_camera, import_audio=self.import_audio,
-                import_effect_references=self.import_effect_references)
+                import_effect_references=self.import_effect_references,
+                reset_actor=self.reset_actor, show_source_helpers=self.show_source_helpers)
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
@@ -2914,6 +2917,9 @@ class DSTS_MT_ImportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_AnimImport.bl_idname, text="Animation (.anim)")
         layout.separator()
         layout.operator('import_scene.dsts_spark', text="Native Effect Graph (.sprk)")
+        layout.operator('import_scene.dsts_effect_timeline', text="Native Effect Timeline (.bson)")
+        layout.operator('import_scene.dsts_collision', text="Object Collisions (.phys)")
+        layout.operator('import_scene.dsts_native_lights', text="Native Light Records (.geom)")
 
 
 class DSTS_MT_NewCenturyImport(bpy.types.Menu):
@@ -2926,6 +2932,15 @@ class DSTS_MT_NewCenturyImport(bpy.types.Menu):
         layout.operator(DSTS_OT_NcGlbImport.bl_idname, text="Model (.glb)")
         layout.operator('import_scene.dsts_nc_skill', text="Skill Phases (.glb)")
         layout.operator(DSTS_OT_CinematicImport.bl_idname, text="Cinematic Preview (.json)")
+
+
+class DSTS_MT_CyberSleuthImport(bpy.types.Menu):
+    bl_idname = 'DSTS_MT_cyber_sleuth_import'
+    bl_label = 'Digimon Cyber Sleuth'
+
+    def draw(self, context):
+        from .src.cyber_sleuth import draw_import_menu
+        draw_import_menu(self, context)
 
 
 class DSTS_MT_ExportSubmenu(bpy.types.Menu):
@@ -2944,16 +2959,20 @@ class DSTS_MT_ExportSubmenu(bpy.types.Menu):
         layout.separator()
         layout.operator(DSTS_OT_PackageNativeModel.bl_idname, text="Package Exported Native Model (.geom)")
         layout.operator('export_scene.dsts_spark', text="Native Effect Graph (.sprk)")
+        layout.operator('export_scene.dsts_effect_timeline', text="Native Effect Timeline (.bson)")
+        layout.operator('export_scene.dsts_collision', text="Object Collisions (.phys)")
+        layout.operator('export_scene.dsts_native_lights', text="Native Light Edits (.geom)")
 
 
 def menu_func_import(self, context):
     self.layout.menu(DSTS_MT_ImportSubmenu.bl_idname)
+    self.layout.menu(DSTS_MT_CyberSleuthImport.bl_idname)
     self.layout.menu(DSTS_MT_NewCenturyImport.bl_idname)
 
 
 def _order_digimon_import_menu():
     # Blender's append/remove API maintains this dynamic callback list. Keep our
-    # two adjacent categories above Next Order regardless of add-on enable order.
+    # adjacent categories above Next Order regardless of add-on enable order.
     callbacks = getattr(bpy.types.TOPBAR_MT_file_import.draw, '_draw_funcs', None)
     if callbacks is None or menu_func_import not in callbacks:
         return
@@ -2999,14 +3018,22 @@ CLASSES = (
     DSTS_OT_ShowErrors,
     DSTS_MT_ImportSubmenu,
     DSTS_MT_NewCenturyImport,
+    DSTS_MT_CyberSleuthImport,
     DSTS_MT_ExportSubmenu,
 )
 
 
 def register():
-    from .src import native_effects, nc_skill_ui
+    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, cyber_sleuth
     native_effects.register()
     nc_skill_ui.register()
+    native_timeline.register()
+    native_collision.register()
+    for cls in native_lights.CLASSES:
+        bpy.utils.register_class(cls)
+    native_lights.register_properties()
+    for cls in cyber_sleuth.CLASSES:
+        bpy.utils.register_class(cls)
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.dsts_extracted_root = StringProperty(
@@ -3072,7 +3099,14 @@ def unregister():
         bpy.utils.unregister_class(cls)
     from .data import material_nodes
     material_nodes.unregister()
-    from .src import native_effects, nc_skill_ui
+    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, cyber_sleuth
+    for cls in reversed(cyber_sleuth.CLASSES):
+        bpy.utils.unregister_class(cls)
+    native_lights.unregister_properties()
+    for cls in reversed(native_lights.CLASSES):
+        bpy.utils.unregister_class(cls)
+    native_collision.unregister()
+    native_timeline.unregister()
     nc_skill_ui.unregister()
     native_effects.unregister()
 

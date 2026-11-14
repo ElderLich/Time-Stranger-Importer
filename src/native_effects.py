@@ -199,10 +199,9 @@ def document_from_collection(collection):
 
 
 def export_effect(collection, filepath, *, overwrite=False):
-    destination = Path(filepath).resolve()
-    source = Path(collection['DSTS_spark_path']).resolve()
-    expected = collection['DSTS_spark_sha256'] if destination == source else None
-    document_from_collection(collection).write(destination, overwrite=overwrite, expected_sha256=expected)
+    from .source_edit import publish_document
+    return publish_document(document_from_collection(collection), collection, filepath,
+        source_path=collection['DSTS_spark_path'], source_hash=collection['DSTS_spark_sha256'], overwrite=overwrite)
 
 
 class DSTS_OT_SparkImport(Operator, ImportHelper):

@@ -19,6 +19,10 @@ with a New Century model-conversion workflow and cinematic preview tools.
 | Cinematic preview JSON | Source actor, sampled camera/FOV and sound cues | Blender scene; no native TS effect package |
 | Captured NC skill library | Select cast, approach, return or cinematic beside the source model | Independent Blender scenes with source animation/audio and optional captured camera |
 | Native `.sprk` effect graph | Verified common ranges, timing and transform keys | Scoped native edits preserving unknown bytes; translation guides only |
+| Native effect `.bson` | Duration, hits, cue timing/cleanup and drawable references | Validated existing-field edits; 30 Hz timeline markers |
+| Native collision `.phys` | Rigid bodies, boxes, spheres and triangle meshes | Existing body/shape/vertex/triangle/association edits; runtime validation pending |
+| Native light records | Static RGB/intensity for verified types; approximate point-light preview | Scoped GEOM light edits, preserving other records; render parity pending |
+| Cyber Sleuth PC model | Dedicated GEOM/NAME/SKEL/base ANIM reader, textures, matching clips and optional camera guides | Native export explicitly unsupported; see [Cyber Sleuth workflow](docs/cyber-sleuth.md) |
 | Exported native model package | Existing `.geom` + base `.anim` + `.nlst` | Validated new package with local shaders/textures and a dependency manifest |
 
 **Tested:** Windows x64, Blender **5.1.2** and **5.3.0**. The add-on targets the
@@ -41,6 +45,8 @@ New Century imports have their own **File → Import → Digimon New Century**
 submenu, immediately above **Digimon Next Order** when that add-on is enabled.
 It contains Model, Skill Phases and Cinematic Preview; native geometry,
 animation and effect imports stay under **Digimon Time Stranger**.
+Cyber Sleuth PC imports use **Digimon Cyber Sleuth**. Its different native
+format is kept separate from Time Stranger export.
 
 Disable older DSTS Unified/Nymic/Romsstar add-ons that register the same menus.
 
@@ -70,6 +76,10 @@ cinematic. The default selects the actual attack rather than the showcase.
 Cameras are imported only where the selected source phase contains one;
 effect timeline records remain inspection references. See the
 [skill/effect workflow](docs/skill-effect-workflows.md) for the current limits.
+
+After the selected motion, the isolated preview plays its captured stand/idle
+clip instead of falling back to the model's bind pose. Source helper empty
+hierarchies are hidden by default and can be shown in the import dialog.
 
 The donor provides the game's shader/layout contract. It does not make Unity
 materials or effects automatically equivalent to Time Stranger's renderer.
@@ -111,6 +121,10 @@ mod. MBE hooks, LODs, camera/effect packages and sound routing remain separate.
 Models with a same-stem SPRK/BSON companion are explicitly rejected by this
 model-only packager. [Package checks and limits](docs/native-model-package.md)
 describe what validation establishes.
+
+Native effect timing and collision editing have separate import/export menus.
+See [native timeline and collision editing](docs/native-timeline-collision.md).
+Those files are not yet assembled into complete effect/scene packages.
 
 ### Edit animations
 
