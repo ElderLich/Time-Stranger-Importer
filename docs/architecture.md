@@ -50,6 +50,14 @@ data ownership and testable conversion functions.
 - Texture export reused stale source DDS bytes after pixel editing, wrapped
   out-of-range channels and omitted mipmaps. Edited/generated textures now
   export clipped BGRA DDS with mipmaps and the game's `.img` extension.
+- Loaded byte-backed sRGB images received a second gamma conversion (source
+  value 64 became 137). Byte buffers now decode before linear mip filtering;
+  float buffers retain their linear interpretation. All 109 real cinematic
+  texture base levels match their source PNG pixels exactly after DDS export.
+- Shader preview and export relied on the original backend's incorrect parameter
+  labels. Nodes now retain numeric GEOM IDs; texture roles use those IDs. A
+  bundled legacy-label snapshot preserves bindings in existing `.blend` files
+  when the native parameter table is corrected.
 - Mixed-rate cinematic sequences were concatenated without resampling. They
   now sample each source strip at a shared output rate and share join endpoints
   without adding a frame. The next phase owns the key at a cut.

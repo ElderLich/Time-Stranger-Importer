@@ -1,6 +1,7 @@
 import bpy
 import os
 import re
+import json
 
 from pathlib import Path
 
@@ -9,6 +10,19 @@ try:
 except ImportError:
     dsts_formats = None
 from .. import data
+
+# Numeric GEOM IDs are the stable binary contract. The original backend's
+# shader label table was shifted; use IDs for preview roles and retain them in
+# Blender nodes so a backend label correction cannot change a material binding.
+_LEGACY_PARAMETER_IDS = json.loads(Path(__file__).with_name('legacy_shader_parameters.json').read_text('utf-8'))
+
+def _export_parameter_id(node):
+    if 'DSTS_parameter_id' in node:
+        return int(node['DSTS_parameter_id'])
+    legacy_name = node.label.removeprefix('DSTS-')
+    if legacy_name not in _LEGACY_PARAMETER_IDS:
+        raise ValueError(f'Unknown legacy shader parameter {legacy_name!r}; reimport its native material')
+    return _LEGACY_PARAMETER_IDS[legacy_name]
 
 def layout_columns(node_groups, column_map, x_step=300, y_step=-220):
     """
@@ -195,13 +209,13 @@ def resolve_material(collection, mat, mat_data, tex_folder):
     # Texture handling inside the group
     # ---------------------------------------------------------------------
     texture_params = {
-        uniform.parameter_name
+        uniform.parameter_id
         for uniform in mat_data.uniforms
         if uniform.uniform_type == "texture"
     }
     is_eye = (
         re.match(r".*_f[0-9]{2}(\.[0-9]{3})?$", mat_data.name)
-        or {"OverlayNormalSampler", "OverlayColorSampler3"}.issubset(texture_params)
+        or {42, 161}.issubset(texture_params)
     )
 
     normal_node = g_nodes.new("ShaderNodeNormalMap")
@@ -273,10 +287,11 @@ def resolve_material(collection, mat, mat_data, tex_folder):
 
             tex_node = g_nodes.new("ShaderNodeTexImage")
             tex_node["unknown_0xC"] = uniform.unknown_0xC
+            tex_node['DSTS_parameter_id'] = uniform.parameter_id
             tex_node.image = get_image(tex_path)
             tex_node.label = "DSTS-" + uniform.parameter_name
 
-            if uniform.parameter_name == "DiffuseColor":
+            if uniform.parameter_id == 24:
                 diffuse_texture_found = True
                 tex_node.image.colorspace_settings.name = 'sRGB'
                 if is_eye:
@@ -284,25 +299,25 @@ def resolve_material(collection, mat, mat_data, tex_folder):
                 else:
                     g_links.new(tex_node.outputs["Color"], principled.inputs["Base Color"])
 
-            if uniform.parameter_name == "OverlayMaskSampler":
+            if uniform.parameter_id == 170:
                 tex_node.image.colorspace_settings.name = 'sRGB'
 
                 sep_node = g_nodes.new("ShaderNodeSeparateColor")
                 g_links.new(tex_node.outputs["Color"], sep_node.inputs["Color"])
 
-            if uniform.parameter_name == "LightPixelProj":
+            if uniform.parameter_id == 303:
                 tex_node.image.colorspace_settings.name = 'sRGB'
                 g_links.new(tex_node.outputs["Color"], principled.inputs["Emission Color"])
                 principled.inputs["Emission Strength"].default_value = 1.0
 
-            elif uniform.parameter_name == "OverlayNormalSampler" and is_eye:
+            elif uniform.parameter_id == 42 and is_eye:
                 tex_node.image.colorspace_settings.name = 'sRGB'
                 # Connect Offset Vector
                 g_links.new(final_eye_vector, tex_node.inputs["Vector"])
                 g_links.new(tex_node.outputs["Color"], overlay_eye_1.inputs["Color1"])
                 g_links.new(tex_node.outputs["Alpha"], overlay_eye_alpha.inputs[0])
 
-            elif uniform.parameter_name == "OverlayColorSampler3" and is_eye:
+            elif uniform.parameter_id == 161 and is_eye:
                 tex_node.image.colorspace_settings.name = 'sRGB'
                 # Connect Offset Vector
                 g_links.new(final_eye_vector, tex_node.inputs["Vector"])
@@ -310,14 +325,14 @@ def resolve_material(collection, mat, mat_data, tex_folder):
                 g_links.new(tex_node.outputs["Alpha"], overlay_eye_1.inputs["Fac"])
                 g_links.new(tex_node.outputs["Alpha"], overlay_eye_alpha.inputs[1])
 
-            elif uniform.parameter_name == "Bumpiness":
+            elif uniform.parameter_id == 27:
                 tex_node.image.colorspace_settings.name = 'Non-Color'
                 if is_eye:
                     g_links.new(tex_node.outputs["Color"], overlay_eye_normal.inputs["Color1"])
                 else:
                     g_links.new(tex_node.outputs["Color"], normal_node.inputs["Color"])
 
-            elif uniform.parameter_name == "OverlayNormalSampler3" and is_eye:
+            elif uniform.parameter_id == 167 and is_eye:
                 tex_node.image.colorspace_settings.name = 'Non-Color'
                 # Connect Offset Vector
                 g_links.new(final_eye_vector, tex_node.inputs["Vector"])
@@ -328,6 +343,7 @@ def resolve_material(collection, mat, mat_data, tex_folder):
             float_node = g_nodes.new(type="DSTS_ShaderFloatUniform")
 
             float_node.label = "DSTS-" + uniform.parameter_name
+            float_node['DSTS_parameter_id'] = uniform.parameter_id
             base_width = 30
             char_width = 8
             float_node.width = base_width + len(float_node.label) * char_width
@@ -347,6 +363,7 @@ def resolve_material(collection, mat, mat_data, tex_folder):
             setting_node = g_nodes.new(type="DSTS_ShaderSetting")
 
             setting_node.label = "DSTS-" + setting.parameter_name
+            setting_node['DSTS_parameter_id'] = setting.parameter_id
             base_width = 30
             char_width = 8
             setting_node.width = base_width + len(setting_node.label) * char_width
@@ -460,20 +477,20 @@ def export_material(mat):
                 mat_out.shaders[i].name = node.shader_strings[i].value
         elif type(node) == bpy.types.ShaderNodeTexImage and node.label.startswith("DSTS-"):
             uniform = dsts_formats.ShaderUniform()
-            uniform.parameter_name = node.label[5:]
+            uniform.parameter_id = _export_parameter_id(node)
             uniform.value = texture_stem(node.image)
             uniform.unknown_0xC = node['unknown_0xC']
 
             mat_out.uniforms.append(uniform)
         elif type(node) == data.material_nodes.ShaderFloatUniform and node.label.startswith("DSTS-"):
             uniform = dsts_formats.ShaderUniform()
-            uniform.parameter_name = node.label[5:]
+            uniform.parameter_id = _export_parameter_id(node)
             uniform.value = [v.value for v in node.values]
 
             mat_out.uniforms.append(uniform)
         elif type(node) == data.material_nodes.ShaderSetting and node.label.startswith("DSTS-"):
             setting = dsts_formats.ShaderSetting()
-            setting.parameter_name = node.label[5:]
+            setting.parameter_id = _export_parameter_id(node)
             setting.value = bytes([v.value for v in node.values])
             setting.unknown_0x12 = node["unknown_0x12"]
 

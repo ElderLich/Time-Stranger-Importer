@@ -202,6 +202,22 @@ if native_path.exists():
         assert len(reread.meshes) == len(encoded.meshes)
         assert len(reread.skeleton.bones) == len(encoded.skeleton.bones)
     donor = next(o for o in native.objects if o.type == 'MESH')
+    from Time_Stranger_Importer.src.material import export_material
+    material = donor.data.materials[0]
+    group = next(n.node_tree for n in material.node_tree.nodes if n.type == 'GROUP' and n.node_tree.name.startswith('DSTS_Data-'))
+    texture_node = next(n for n in group.nodes if n.type == 'TEX_IMAGE' and n.get('DSTS_parameter_id') == 24)
+    label = texture_node.label
+    texture_node.label = 'DSTS-Label changed after native schema correction'
+    exported = export_material(material)
+    assert any(u.parameter_id == 24 and u.uniform_type == 'texture' for u in exported.uniforms)
+    # A saved pre-schema .blend has only the old, misleading label.
+    del texture_node['DSTS_parameter_id']
+    texture_node.label = 'DSTS-DiffuseColor'
+    exported = export_material(material)
+    assert any(u.parameter_id == 24 and u.uniform_type == 'texture' for u in exported.uniforms)
+    texture_node['DSTS_parameter_id'] = 24
+    texture_node.label = label
+    print('PASS numeric shader IDs and legacy blend material migration')
     seam_mesh = bpy.data.meshes.new("Seam regression")
     seam_mesh.from_pydata([(0,0,0),(1,0,0),(1,1,0),(0,1,0)], [], [(0,1,2),(0,2,3)])
     seam_mesh.materials.append(donor.data.materials[0])
