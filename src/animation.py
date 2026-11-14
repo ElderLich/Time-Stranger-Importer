@@ -150,6 +150,8 @@ def build_from_action(owner, action, playback_rate=30.0, slot=None, frame_range=
     from .cyber_sleuth import is_cyber_sleuth, reject_export
     if is_cyber_sleuth(owner) or is_cyber_sleuth(action):
         reject_export(owner)
+    from .texture_animation import validate_export
+    validate_export(owner)
     if not math.isfinite(playback_rate) or playback_rate <= 0:
         raise ValueError("Animation playback rate must be finite and positive")
     constraints = list(owner.constraints) + [c for bone in owner.pose.bones for c in bone.constraints]

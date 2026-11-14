@@ -219,6 +219,11 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
                 bpy.ops.wm.show_errors_window('INVOKE_DEFAULT', errors="\n\n".join(error_list))
 
         import_animations_for_geom(filepath, armature_obj)
+        if armature_obj is not None:
+            from .texture_animation import configure_preview
+            notes = configure_preview(new_collection, armature_obj, filepath)
+            if notes:
+                new_collection['DSTS_texture_preview_notes'] = '\n'.join(notes)
         return new_collection
 
     finally:

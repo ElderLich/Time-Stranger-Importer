@@ -519,6 +519,8 @@ def texture_stem(image):
 
 
 def export_material(mat):
+    from .texture_animation import validate_material
+    validate_material(mat)
     if dsts_formats is None:
         raise RuntimeError(
             "Native .geom material export requires the compiled dsts_formats backend."

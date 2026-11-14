@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 4, 4),
+    "version": (1, 4, 5),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -3031,7 +3031,7 @@ CLASSES = (
 
 
 def register():
-    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth
+    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth, texture_animation
     native_effects.register()
     nc_skill_ui.register()
     native_timeline.register()
@@ -3042,6 +3042,8 @@ def register():
     for cls in native_scene.CLASSES:
         bpy.utils.register_class(cls)
     for cls in cyber_sleuth.CLASSES:
+        bpy.utils.register_class(cls)
+    for cls in texture_animation.CLASSES:
         bpy.utils.register_class(cls)
     for cls in CLASSES:
         bpy.utils.register_class(cls)
@@ -3088,9 +3090,12 @@ def register():
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     from .data import material_nodes
     material_nodes.register()
+    texture_animation.register_handlers()
 
 
 def unregister():
+    from .src import texture_animation
+    texture_animation.unregister_handlers()
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     for attr in (
@@ -3105,6 +3110,8 @@ def unregister():
         if hasattr(bpy.types.Scene, attr):
             delattr(bpy.types.Scene, attr)
     for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)
+    for cls in reversed(texture_animation.CLASSES):
         bpy.utils.unregister_class(cls)
     from .data import material_nodes
     material_nodes.unregister()
