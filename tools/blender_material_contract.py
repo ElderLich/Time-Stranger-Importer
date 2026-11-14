@@ -39,6 +39,8 @@ def snapshot(native):
         'uniforms': [dict(id=u.parameter_id, kind=u.uniform_type,
                           value=u.value if u.uniform_type == 'texture' else list(map(float, u.value)),
                           **(dict(unknown_0xC=u.unknown_0xC) if u.uniform_type == 'texture' else {}),
+                          **(dict(float_payload_padding=bytes(u.float_payload_padding).hex())
+                             if u.uniform_type == 'float' and hasattr(u, 'float_payload_padding') else {}),
                           **words(u, PARAMETER_WORDS)) for u in native.uniforms],
         'settings': [dict(id=s.parameter_id, value=bytes(s.value).hex(), unknown_0x12=s.unknown_0x12,
                           **words(s, PARAMETER_WORDS)) for s in native.settings],

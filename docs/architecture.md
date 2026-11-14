@@ -71,6 +71,9 @@ data ownership and testable conversion functions.
   present. Material header and parameter trailer words survive saved scenes;
   uint32 values use decimal strings in Blender properties. Older saved scenes
   without trailer properties retain the backend's existing defaults.
+  Numeric uniforms also retain the unused bytes after their active floats in
+  the 16-byte payload. Those bytes are opaque and can be nonzero in native
+  donors; editing an active value does not zero the remaining payload.
 - Native-name collisions after removing Blender suffixes and ambiguous animation
   targets after splitting an animated material now fail explicitly. This avoids
   silently assigning every affected mesh or float channel to the last material.
@@ -178,7 +181,7 @@ is unchanged. It compares every pass, uniform, setting and exposed metadata word
 through `.blend` save/reload and GEOM serialization, and rejects a truncated pass
 table or matrix-as-texture binding. The updated backend and full smoke suite
 passed Blender 5.1.2 and 5.3.0; the full NC export also passed 5.1.2. The backend
-is built from Formats commit `7045d25`, CPython 3.13 Windows x64, not renamed
+is built from Formats commit `d152d99`, CPython 3.13 Windows x64, not renamed
 from another ABI.
 
 The smoke tests establish serializer and Blender behavior. In-game rendering,

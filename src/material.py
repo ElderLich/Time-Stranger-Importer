@@ -401,6 +401,8 @@ def resolve_material(collection, mat, mat_data, tex_folder):
             float_node.label = "DSTS-" + uniform.parameter_name
             float_node['DSTS_parameter_id'] = uniform.parameter_id
             _store_native_words(float_node, uniform, _PARAMETER_WORDS)
+            if hasattr(uniform, 'float_payload_padding'):
+                float_node['DSTS_float_payload_padding'] = bytes(uniform.float_payload_padding).hex()
             base_width = 30
             char_width = 8
             float_node.width = base_width + len(float_node.label) * char_width
@@ -551,6 +553,10 @@ def export_material(mat):
             uniform = dsts_formats.ShaderUniform()
             uniform.parameter_id = _export_parameter_id(node)
             uniform.value = [v.value for v in node.values]
+            if 'DSTS_float_payload_padding' in node:
+                if not hasattr(uniform, 'float_payload_padding'):
+                    raise RuntimeError('The geometry backend cannot preserve numeric payload padding; update the backend')
+                uniform.float_payload_padding = bytes.fromhex(node['DSTS_float_payload_padding'])
             _restore_native_words(node, uniform, _PARAMETER_WORDS)
 
             mat_out.uniforms.append(uniform)
