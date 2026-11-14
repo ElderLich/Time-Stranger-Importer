@@ -164,7 +164,8 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
         mesh_data.validate(clean_customdata=False)
         
         # 4. Optional: If you rely on Normal Maps, calculate tangents now
-        mesh_data.calc_tangents()
+        if mesh_data.uv_layers:
+            mesh_data.calc_tangents(uvmap=mesh_data.uv_layers[0].name)
     
     # --- OBJECT ---
     obj = bpy.data.objects.new(bl_mesh.name, mesh_data)

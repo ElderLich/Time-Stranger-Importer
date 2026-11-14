@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 4, 2),
+    "version": (1, 4, 3),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -1007,6 +1007,10 @@ class DSTS_OT_GeomImport(Operator, ImportHelper):
         subtype='DIR_PATH',
         default="",
     )
+    include_scene_records: BoolProperty(
+        name="Camera and Light Previews", default=False,
+        description="Import owned native camera bindings and light controls with the model; records are preserved even when previews are disabled",
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -1016,12 +1020,14 @@ class DSTS_OT_GeomImport(Operator, ImportHelper):
         row = layout.row()
         row.enabled = self.use_custom_images_path
         row.prop(self, "images_path")
+        layout.prop(self, "include_scene_records")
 
     def execute(self, context):
         try:
             from .src.geom import import_geom
             images_folder = bpy.path.abspath(self.images_path) if self.use_custom_images_path and self.images_path else None
-            imported_collection = import_geom(context, self.filepath, images_folder)
+            imported_collection = import_geom(context, self.filepath, images_folder,
+                                              include_scene_records=self.include_scene_records)
             self.report({'INFO'}, f"Imported: {imported_collection.name}")
             return {'FINISHED'}
         except Exception as exc:
@@ -1095,8 +1101,9 @@ class DSTS_OT_GeomExport(Operator, ExportHelper):
             self.report({'WARNING'}, export_note)
 
         try:
-            with open(os.path.splitext(self.filepath)[0] + ".nlst", "wb") as f:
-                f.write(write_nlst(geom).encode("utf-8"))
+            from .src.spark import atomic_write
+            atomic_write(os.path.splitext(self.filepath)[0] + ".nlst",
+                         write_nlst(geom).encode("utf-8"), overwrite=True)
 
             if self.export_textures:
                 output_dir = os.path.dirname(self.filepath)
@@ -1927,8 +1934,8 @@ def export_all_collection(collection, filepath, export_textures_as_png=False):
     export_note = getattr(geom, "export_note", None)
 
     nlst_path = os.path.splitext(filepath)[0] + ".nlst"
-    with open(nlst_path, "wb") as f:
-        f.write(write_nlst(geom).encode("utf-8"))
+    from .src.spark import atomic_write
+    atomic_write(nlst_path, write_nlst(geom).encode("utf-8"), overwrite=True)
 
     exported_textures = export_textures(collection, output_dir, as_png=export_textures_as_png)
 
@@ -3024,7 +3031,7 @@ CLASSES = (
 
 
 def register():
-    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, cyber_sleuth
+    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth
     native_effects.register()
     nc_skill_ui.register()
     native_timeline.register()
@@ -3032,6 +3039,8 @@ def register():
     for cls in native_lights.CLASSES:
         bpy.utils.register_class(cls)
     native_lights.register_properties()
+    for cls in native_scene.CLASSES:
+        bpy.utils.register_class(cls)
     for cls in cyber_sleuth.CLASSES:
         bpy.utils.register_class(cls)
     for cls in CLASSES:
@@ -3099,8 +3108,10 @@ def unregister():
         bpy.utils.unregister_class(cls)
     from .data import material_nodes
     material_nodes.unregister()
-    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, cyber_sleuth
+    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth
     for cls in reversed(cyber_sleuth.CLASSES):
+        bpy.utils.unregister_class(cls)
+    for cls in reversed(native_scene.CLASSES):
         bpy.utils.unregister_class(cls)
     native_lights.unregister_properties()
     for cls in reversed(native_lights.CLASSES):

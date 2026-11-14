@@ -43,7 +43,7 @@ def rest_signature(armature):
                        for b in armature.data.bones])
 
 
-def preserve_camera_source(collection, armature, filepath):
+def preserve_camera_source(collection, armature, filepath, *, allow_mixed=False):
     raw = Path(filepath).read_bytes()
     if len(raw) < 0xB0:
         raise ValueError("Truncated GEOM header")
@@ -51,7 +51,7 @@ def preserve_camera_source(collection, armature, filepath):
     if not count:
         return False
     meshes, materials, lights = struct.unpack_from('<HHH', raw, 4)
-    if meshes or materials or lights:
+    if (meshes or materials or lights) and not allow_mixed:
         raise ValueError("Mixed camera/mesh/light GEOM export is not supported; keep the original file")
     offset = struct.unpack_from('<Q', raw, 0x60)[0]
     if offset < 0xB0 or offset + CAMERA_RECORD_SIZE * count > len(raw):
@@ -93,7 +93,8 @@ class PreservedCameraGeom:
         self.export_note = 'Camera GEOM preserves its rig and unknown data; verified lens fields are editable. Export motion as .anim.'
 
     def to_file(self, filepath):
-        Path(filepath).write_bytes(self._raw)
+        from .spark import atomic_write
+        atomic_write(filepath, self._raw, overwrite=True)
 
     def nlst_text(self):
         return self._nlst

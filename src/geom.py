@@ -116,14 +116,12 @@ def _texture_search_dirs(geom_path, images_folder=None):
     return dirs
 
 
-def import_geom(context, filepath, images_folder=None):
+def import_geom(context, filepath, images_folder=None, *, include_scene_records=False):
     from .scene_state import snapshot, rollback
     import struct
     raw = Path(filepath).read_bytes()
     if len(raw) < 0xB0 or struct.unpack_from('<I', raw)[0] != 316:
         raise ValueError('Expected a complete Time Stranger GEOM v316 header')
-    if struct.unpack_from('<H', raw, 8)[0]:
-        raise ValueError('This GEOM contains native lights; light import/export is not implemented')
     for offset in (0x48, 0x50, 0x58, 0x60, 0x68, 0x78, 0x80, 0x90, 0x98):
         pointer = struct.unpack_from('<Q', raw, offset)[0]
         if pointer > len(raw):
@@ -132,7 +130,7 @@ def import_geom(context, filepath, images_folder=None):
     active = context.view_layer.objects.active
     selected = list(context.selected_objects)
     try:
-        return _import_geom(context, filepath, images_folder)
+        return _import_geom(context, filepath, images_folder, include_scene_records=include_scene_records)
     except Exception:
         if context.object and context.object.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -143,7 +141,7 @@ def import_geom(context, filepath, images_folder=None):
         raise
 
 
-def _import_geom(context, filepath, images_folder=None):
+def _import_geom(context, filepath, images_folder=None, *, include_scene_records=False):
     dsts_formats, material, mesh, skeleton, utils = load_format_modules()
 
     error_state_old = dsts_formats.get_throw_errors()
@@ -172,7 +170,11 @@ def _import_geom(context, filepath, images_folder=None):
             bone_name_map = {}
 
         from .native_camera import preserve_camera_source
-        is_camera = preserve_camera_source(new_collection, armature_obj, filepath)
+        is_camera = preserve_camera_source(new_collection, armature_obj, filepath, allow_mixed=True)
+        if geom.lights or (include_scene_records and geom.cameras):
+            from .native_scene import preserve_scene_records
+            preserve_scene_records(context, new_collection, armature_obj, filepath, geom,
+                                   preview=include_scene_records)
 
         texture_search_dirs = [str(p) for p in _texture_search_dirs(Path(filepath), images_folder)]
         new_collection["DSTS_texture_search_dirs"] = "\n".join(texture_search_dirs)
@@ -295,7 +297,7 @@ def export_geom(collection):
         raise ValueError("A Geom collection must contain exactly one armature")
     geom.skeleton = skeleton.export_skeleton(armatures[0])
 
-    if 'DSTS_camera_source' in collection:
+    if 'DSTS_camera_source' in collection and 'DSTS_scene_source' not in collection:
         from .native_camera import PreservedCameraGeom
         if collection.children or any(obj != armatures[0] for obj in collection.objects):
             raise ValueError('Native camera GEOM export supports only its original rig; remove added objects/collections')
@@ -339,6 +341,12 @@ def export_geom(collection):
 
     for obj in [*geom.skeleton.bones] + [*geom.materials] + [*geom.meshes]:
         obj.name = re.sub(r"(\.[0-9]{3})?$", "", obj.name)
+
+    if 'DSTS_scene_source' in collection:
+        from .native_scene import restore_scene_records
+        preserved = restore_scene_records(collection, armatures[0], geom)
+        if preserved is not None:
+            return preserved
 
     return geom
 

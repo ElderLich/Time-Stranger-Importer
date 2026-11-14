@@ -194,7 +194,12 @@ def document_from_collection(collection):
     for obj in objects:
         index = obj['DSTS_light_index']
         source = geom.lights[index]
-        if (obj.parent or obj.constraints or obj.animation_data or
+        if collection.get('DSTS_scene_owner'):
+            from .native_scene import validate_preview_binding
+            validate_preview_binding(collection, obj)
+        elif obj.constraints:
+            raise ValueError('Native light constraints require an owned model scene binding')
+        if (obj.parent or obj.animation_data or
                 _matrix_values(obj.matrix_basis) != json.loads(obj['DSTS_light_matrix'])):
             raise ValueError('Native light placement/animation edits require the bound rig; edit optical fields only')
         if (obj['DSTS_light_type'] != source.native_type or obj['DSTS_light_slot'] != source.native_slot or
@@ -225,6 +230,8 @@ def document_from_collection(collection):
 
 
 def export_lights(collection, filepath, *, overwrite=False):
+    if collection.get('DSTS_scene_owner'):
+        raise ValueError('These lights belong to an imported model; export the owning GEOM collection to include all model and light edits')
     return publish_document(document_from_collection(collection), collection, filepath,
         source_path=collection['DSTS_light_path'], source_hash=collection['DSTS_light_sha256'], overwrite=overwrite)
 
@@ -296,7 +303,10 @@ class DSTS_PT_NativeLight(Panel):
             layout.label(text='Source animation may override static fields', icon='INFO')
         if obj.get('DSTS_light_preview_error'):
             layout.label(text=obj['DSTS_light_preview_error'], icon='ERROR')
-        layout.operator('export_scene.dsts_native_lights')
+        if collection_for(obj).get('DSTS_scene_owner'):
+            layout.label(text='Export with the owning GEOM collection.')
+        else:
+            layout.operator('export_scene.dsts_native_lights')
 
 
 CLASSES = (DSTS_PG_NativeLight, DSTS_OT_NativeLightsImport, DSTS_OT_NativeLightsExport, DSTS_PT_NativeLight)

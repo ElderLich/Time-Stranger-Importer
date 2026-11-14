@@ -61,6 +61,13 @@ transforms, and clear accidental poses before exporting the rest geometry.
 UV and normal seams are preserved; skin weights are limited to the four
 strongest bone influences.
 
+Enable **Camera and Light Previews** to import the GEOM's own scene records
+with the model. Supported perspective cameras and point lights follow their
+native bones; camera lenses and verified light fields export with the owning
+model. Mixed camera/light/mesh files are supported. Scene records remain
+preserved when previews are disabled. See [combined native scene workflow](docs/native-scene.md)
+for the supported controls and remaining animation/rendering limits.
+
 ### Add a New Century model
 
 Use **New Century Model (.glb)** and select a native Time Stranger donor `.geom`.

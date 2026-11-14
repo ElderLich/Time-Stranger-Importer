@@ -14,6 +14,12 @@ edited record fields changed. All other source bytes, including mesh/material,
 camera, skeleton, animation bindings and unknown light words, survive exactly.
 Existing source name lists and animation files remain required companions.
 
+Version 1.4.3 also includes these controls in the regular GEOM import when
+**Camera and Light Previews** is enabled. The light collection then belongs to
+the model and follows its native bone positions. Export the owning GEOM to
+include both mesh and light edits; a separate light-only export is rejected
+for those owned previews. See [native scene workflow](native-scene.md).
+
 Point lights preview their source bind-pose position and range. This preview
 maps native intensity to a relative Blender energy value; watt equivalence and
 native falloff/shadow behavior are not established. The panel retains the exact
