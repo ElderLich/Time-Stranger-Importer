@@ -17,6 +17,7 @@ with a New Century model-conversion workflow and cinematic preview tools.
 | Textures | `.img`, `.dds`, `.png` | Game-ready `.img` DDS with mipmaps, or PNG |
 | Native camera rig | `cam_*.geom` + neighboring `.anim` | Motion channels, FOV and clip planes; unknown data retained |
 | Cinematic preview JSON | Source actor, sampled camera/FOV and sound cues | Blender scene; no native TS effect package |
+| Exported native model package | Existing `.geom` + base `.anim` + `.nlst` | Validated new package with local shaders/textures and a dependency manifest |
 
 **Tested:** Windows x64, Blender **5.1.2** and **5.3.0**. The add-on targets the
 5.x API family. Native geometry needs a backend matching Blender's embedded
@@ -62,6 +63,33 @@ Split donor materials retain independent native data: all 14 shader slots,
 numeric uniforms, render settings and material flags. Give split materials
 distinct names before export. Splitting an animated material requires explicit
 float-channel remapping and is currently rejected.
+
+Importing the next NC model does **not** automatically bring its Unity shaders,
+particles, scenery, persistent effects or complete skill cinematic into the
+game. The model workflow handles the rig and supplied motion clips; it borrows
+a native donor material contract. Our separate conversion research has not yet
+become a general effect/shader converter. See the
+[capability map](docs/native-model-package.md#capability-map).
+
+### Package an exported native model
+
+After exporting geometry and its compatible base/motion animations, choose
+**File → Export → Digimon Time Stranger → Package Exported Native Model**.
+Select the `.geom`, choose a **new** output folder, and optionally select the
+extracted asset folder containing `images/` and `shaders/`.
+
+This checks name-list identity, animation channel counts, native matrix
+alignment, all active shader-pass dependencies and texture bindings. Local
+images/shaders enter `dsts-loader/patch`; resources resolved only from the
+native extraction are recorded as external dependencies, so they are not
+copied over unrelated mods. Missing or invalid dependencies cancel before a
+package is published. Existing output folders are never merged or overwritten.
+
+The result is an asset package and JSON manifest, not an installed Reloaded II
+mod. MBE hooks, LODs, camera/effect packages and sound routing remain separate.
+Models with a same-stem SPRK/BSON companion are explicitly rejected by this
+model-only packager. [Package checks and limits](docs/native-model-package.md)
+describe what validation establishes.
 
 ### Edit animations
 

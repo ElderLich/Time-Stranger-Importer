@@ -16,6 +16,7 @@ data ownership and testable conversion functions.
 | `src/cinematic.py` | Import a source-backed NC camera/audio preview into a separate scene. |
 | `src/nc_glb.py` | Preserve NC bind poses, root motion and DSTS bone-location semantics; borrow donor material metadata. |
 | `src/backend.py` | Load the geometry extension using CPython's supported ABI suffixes. |
+| `src/model_package.py` | Validate one native mesh model and exact dependencies; publish a new package with hashes and explicit external native resources. |
 
 ### Repaired failures
 
@@ -160,6 +161,7 @@ format or inject a sound bank into the game.
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_smoke.py
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_smoke.py -- --nc-export
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_material_contract.py
+blender --background --factory-startup --python-exit-code 1 --python tools/blender_model_package.py
 python tools/package_addon.py
 ```
 
@@ -186,6 +188,13 @@ from another ABI.
 
 The smoke tests establish serializer and Blender behavior. In-game rendering,
 particle parity and optical-camera equivalence need separate game validation.
+
+The native model package step promotes dependency and matrix-alignment checks
+from the conversion research without importing its unfinished model-specific
+shader/effect adapters. It preserves existing native bytes, validates the base
+ANIM/NLST and optional matching motions, and separates local payloads from native
+resources. It explicitly rejects effect/scene packages. See the
+[capability map and package contract](native-model-package.md).
 
 ## Reference comparison and audit coverage
 

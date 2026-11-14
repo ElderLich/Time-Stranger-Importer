@@ -2825,6 +2825,42 @@ class DSTS_OT_CinematicImport(Operator, ImportHelper):
         return {'FINISHED'}
 
 
+class DSTS_OT_PackageNativeModel(Operator, ImportHelper):
+    """Validate an exported GEOM and its existing native dependencies in a new package"""
+    bl_idname = "export_scene.dsts_model_package"
+    bl_label = "Package Exported Native Model"
+    filename_ext = ".geom"
+    filter_glob: StringProperty(default="*.geom", options={'HIDDEN'})
+    output_directory: StringProperty(name="New Package Folder", subtype='DIR_PATH')
+    resource_root: StringProperty(name="Native Resource Folder", subtype='DIR_PATH',
+        description="Optional extracted folder containing images/ and shaders/; these native dependencies are recorded, not copied")
+    include_motions: BoolProperty(name="Include Same-Stem Motions", default=True,
+        description="Include matching model_*.anim files, excluding separate LOD assets; every clip must match the model's channel counts")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'output_directory')
+        layout.prop(self, 'resource_root')
+        layout.prop(self, 'include_motions')
+        layout.label(text="Select an exported GEOM with base ANIM and NLST.", icon='INFO')
+        layout.label(text="Effects, cinematics and table hooks are separate.")
+
+    def execute(self, context):
+        from .src.model_package import package_native_model
+        if not self.output_directory:
+            self.report({'ERROR'}, 'Choose a new package folder')
+            return {'CANCELLED'}
+        try:
+            report = package_native_model(self.filepath, bpy.path.abspath(self.output_directory),
+                bpy.path.abspath(self.resource_root) if self.resource_root else None, self.include_motions)
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Packaged {len(report['files'])} files; "
+            f"{len(report['external_native_dependencies'])} native dependencies. In-game validation remains required.")
+        return {'FINISHED'}
+
+
 class DSTS_MT_ImportSubmenu(bpy.types.Menu):
     """Digimon Time Stranger Import Submenu"""
     bl_idname = "DSTS_MT_import_submenu"
@@ -2852,6 +2888,8 @@ class DSTS_MT_ExportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_AnimExport.bl_idname, text="Animation (.anim)")
         layout.operator(DSTS_OT_AnimExportAll.bl_idname, text="All Animations (.anim)")
         layout.operator(DSTS_OT_ExportNcMoveset.bl_idname, text="NC Moveset (.anim)")
+        layout.separator()
+        layout.operator(DSTS_OT_PackageNativeModel.bl_idname, text="Package Exported Native Model (.geom)")
 
 
 def menu_func_import(self, context):
@@ -2868,6 +2906,7 @@ def menu_func_export(self, context):
 
 CLASSES = (
     DSTS_OT_CinematicImport,
+    DSTS_OT_PackageNativeModel,
     DSTS_OT_GeomImport,
     DSTS_OT_GeomExport,
     DSTS_OT_NcGlbImport,
