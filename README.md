@@ -11,7 +11,7 @@ with a New Century model-conversion workflow and cinematic preview tools.
 
 | Asset | Import | Export |
 | --- | --- | --- |
-| Time Stranger `.geom` | Skeleton, meshes, materials, textures | Geometry + `.nlst`, preserving donor metadata |
+| Time Stranger `.geom` | Skeleton, meshes, materials, textures | Geometry + `.nlst`, native bind data and material animation targets |
 | Time Stranger `.anim` | Bone motion and indexed float channels | One clip, NLA tracks, or an NC moveset |
 | New Century `.glb` | Skinned model, bind pose, root motion and clips | Through a native TS donor `.geom` |
 | Textures | `.img`, `.dds`, `.png` | Game-ready `.img` DDS with mipmaps, or PNG |
@@ -67,6 +67,7 @@ Timing follows the scene FPS and strip scale. The exporter uses the selected
 slot and trim range; bake repeated/reversed/time-remapped or multi-strip tracks
 before exporting. Camera/material float channels remain visible as
 `DSTS_float_N` custom-property curves rather than being silently discarded.
+Native material targets survive export and follow material renames.
 
 ## Cameras & effects
 
@@ -87,7 +88,8 @@ boundaries and the reproducible headless checks.
 
 ## How it works
 
-The compiled **DSTS Formats Parser** reads and writes geometry. Blender objects
+The compiled **Time Stranger Formats** backend, derived from DSTS Formats Parser,
+reads and writes geometry. Blender objects
 retain material layouts and game metadata needed for export. Pherakki's Python
 animation serializers handle `.anim`; a shared Blender adapter preserves
 animation channels, timing and action slots. The NC conversion fits the source

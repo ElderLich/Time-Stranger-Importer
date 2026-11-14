@@ -349,15 +349,8 @@ def _set_material_vertex_layout_from_mesh(mat, mesh_data):
 
     from . import data
 
-    group_node = next(
-        (
-            node for node in mat.node_tree.nodes
-            if node.type == "GROUP"
-            and node.node_tree
-            and node.node_tree.name.startswith(f"DSTS_Data-{mat.name}")
-        ),
-        None,
-    )
+    from .src.material import find_data_group
+    group_node = find_data_group(mat)
     if group_node is None:
         return False
 

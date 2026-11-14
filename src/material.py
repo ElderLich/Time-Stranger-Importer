@@ -24,6 +24,17 @@ def _export_parameter_id(node):
         raise ValueError(f'Unknown legacy shader parameter {legacy_name!r}; reimport its native material')
     return _LEGACY_PARAMETER_IDS[legacy_name]
 
+
+def find_data_group(mat):
+    """Find native metadata by its node type, independent of editable names."""
+    groups = [node for node in mat.node_tree.nodes
+              if node.type == 'GROUP' and node.node_tree
+              and any(type(child) == data.material_nodes.ShaderDataNode
+                      for child in node.node_tree.nodes)] if mat.node_tree else []
+    if len(groups) > 1:
+        raise ValueError(f"Material '{mat.name}' contains multiple native metadata groups")
+    return groups[0] if groups else None
+
 def layout_columns(node_groups, column_map, x_step=300, y_step=-220):
     """
     Automatically lays out nodes inside a node tree in vertical columns.
@@ -445,6 +456,8 @@ def resolve_material(collection, mat, mat_data, tex_folder):
     mat['DSTS_unknown_0x31C'] = mat_data.unknown_0x31C
     mat['DSTS_unknown_0x324'] = mat_data.unknown_0x324
     mat['DSTS_unknown_0x326'] = mat_data.unknown_0x326
+    # Blender integer ID properties are signed 32-bit; native hashes are uint32.
+    mat['DSTS_source_name_hash'] = str(int(mat_data.name_hash))
 
     links.new(group_node.outputs["Shader"], output.inputs["Surface"])
 
@@ -468,7 +481,9 @@ def export_material(mat):
 
     mat_out = dsts_formats.Material()
 
-    g_node = next(n for n in mat.node_tree.nodes if n.type == "GROUP" and n.node_tree.name.startswith(f"DSTS_Data-{mat.name}") )
+    g_node = find_data_group(mat)
+    if g_node is None:
+        raise ValueError(f"Material '{mat.name}' has no native metadata; use Borrow Material Setup before export")
     g_tree = g_node.node_tree
 
     for node in g_tree.nodes:

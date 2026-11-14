@@ -58,6 +58,16 @@ data ownership and testable conversion functions.
   labels. Nodes now retain numeric GEOM IDs; texture roles use those IDs. A
   bundled legacy-label snapshot preserves bindings in existing `.blend` files
   when the native parameter table is corrected.
+- Native material float bindings now survive geometry import/export as well as
+  their ANIM curves. Material hash targets follow renamed materials; missing
+  targets fail explicitly. Metadata lookup uses the native data node type, so
+  renaming a material or its node group cannot disconnect its export settings.
+- The updated geometry backend bounds binary reads and preserves camera, float,
+  and parent-table records. A compact source bind-pose snapshot survives saved
+  Blender scenes. Untouched bones retain exact source TRS and inverse bind
+  matrices; rest edits invalidate the snapshot and recalculate the matrices.
+  Flagged native parent records survive unchanged hierarchies, while unsupported
+  topology edits fail instead of dropping flags.
 - Mixed-rate cinematic sequences were concatenated without resampling. They
   now sample each source strip at a shared output rate and share join endpoints
   without adding a frame. The next phase owns the key at a cut.
@@ -74,8 +84,9 @@ Other 5.x releases need the same supported APIs and a backend matching their
 embedded Python ABI. This is a compatibility target, not a claim that every
 uninstalled or future release has been tested.
 
-`dsts_formats` is a pybind11 C++ extension. To build another ABI/platform, use
-the DSTS Formats Parser source with that Blender release's Python headers and
+`dsts_formats` is a pybind11 C++ extension. The bundled build uses the maintained
+**Time Stranger Formats** source, derived from DSTS Formats Parser. To build
+another ABI/platform, use that source with the Blender release's Python headers and
 libraries, CMake and a C++ compiler, then place the resulting
 `dsts_formats<extension-suffix>` file in `src/`. Renaming a CPython extension
 does not change its ABI. Animation reading/writing uses the vendored Python
@@ -84,7 +95,9 @@ serializers; native geometry still requires the extension.
 ## Cameras, particles and audio
 
 Native `cam_chr039_bs01_pc.geom` (Lucemon Chaos Mode) has a camera section that
-the legacy C++ writer cannot emit. Import retains its complete original GEOM
+the original C++ writer could not emit. The updated backend preserves those
+records; the add-on retains its conservative original-byte camera workflow.
+Import retains its complete original GEOM
 and NLST in collection properties, imports the skeleton and neighboring ANIM,
 and allows motion-channel editing. Geometry export refuses a changed rest rig.
 Pinned native runtime evidence establishes **56-byte** camera records (the
@@ -118,7 +131,9 @@ The smoke script verifies registration lifecycle, layered slots, escaped bone
 names, asynchronous component keys, quaternion normalization, native animation
 serialization, masks/float channels and FPS conversion. When local fixtures
 exist, it also imports/exports chr050, tests UV seams/non-bone weights, verifies
-Lucemon's camera bytes, and loads the real Leviamon X cinematic manifest.
+exact source bind matrices, exercises a real material float channel and renamed
+target, preserves chr800's flagged parent records, verifies Lucemon's camera
+bytes, and loads the real Leviamon X cinematic manifest.
 `--nc-export` additionally runs the full Leviamon X donor-model conversion and
 geometry/animation export. Mixed-rate multi-part sequence timing is covered by
 the synthetic fixture even when the chosen NC actor has no three-part skill.

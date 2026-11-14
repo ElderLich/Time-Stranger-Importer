@@ -195,12 +195,18 @@ if native_path.exists():
             for pb in obj.pose.bones:
                 pb.matrix_basis = Matrix.Identity(4)
     encoded = export_geom(native)
+    assert encoded.bind_pose_snapshot_matches, 'Untouched native rest pose should retain source bind matrices'
     with tempfile.TemporaryDirectory(prefix="dsts_geom_") as folder:
         path = str(Path(folder) / "roundtrip.geom")
         encoded.to_file(path)
         reread = load_format_modules()[0].Geom.from_file(path)
         assert len(reread.meshes) == len(encoded.meshes)
         assert len(reread.skeleton.bones) == len(encoded.skeleton.bones)
+        source_raw, output_raw = native_path.read_bytes(), Path(path).read_bytes()
+        source_ibpm = struct.unpack_from('<Q', source_raw, 0x68)[0]
+        output_ibpm = struct.unpack_from('<Q', output_raw, 0x68)[0]
+        matrix_bytes = len(encoded.skeleton.bones) * 48
+        assert source_raw[source_ibpm:source_ibpm + matrix_bytes] == output_raw[output_ibpm:output_ibpm + matrix_bytes]
     donor = next(o for o in native.objects if o.type == 'MESH')
     from Time_Stranger_Importer.src.material import export_material
     material = donor.data.materials[0]
@@ -233,6 +239,76 @@ if native_path.exists():
     assert len(out.vertices) == 6, len(out.vertices)
     assert len(out.indices) == 6
     print("PASS native chr050 geometry import/export and UV seam / non-bone weight regression")
+
+float_path = ROOT.parent / 'Time Stranger/local/leviamon-native/dsts-loader/patch/n147_p0492.geom'
+if float_path.exists():
+    backend = load_format_modules()[0]
+    assert hasattr(backend, 'FloatChannel'), 'Native material animation needs the updated backend'
+    original_geom = backend.Geom.from_file(str(float_path))
+    original_binding = original_geom.skeleton.float_channels[0]
+    # Import twice to exercise Blender's .001 material suffix and source hash retention.
+    import_geom(bpy.context, str(float_path))
+    animated_material = import_geom(bpy.context, str(float_path))
+    rig = next(o for o in animated_material.objects if o.type == 'ARMATURE')
+    clip = next(t for t in rig.animation_data.nla_tracks if t.name == float_path.stem).strips[0]
+    restored_anim = build_from_action(rig, clip.action, 30, clip.action_slot)
+    original_anim = addon._read_anim_file(str(float_path.with_suffix('.anim')))
+    assert restored_anim.float_channel_count == original_anim.float_channel_count == 1
+    assert restored_anim.frame_count == original_anim.frame_count
+    assert max(abs(restored_anim.float_channels[0][f] - v)
+               for f, v in original_anim.float_channels[0].items()) < 1e-5
+    rig.animation_data.action = None
+    for pb in rig.pose.bones:
+        pb.matrix_basis = Matrix.Identity(4)
+    output = export_geom(animated_material)
+    binding = output.skeleton.float_channels[0]
+    assert (binding.name_hash, binding.array_index, binding.flags) == (
+        original_binding.name_hash, original_binding.array_index, original_binding.flags)
+    model = next(o for o in animated_material.objects if o.type == 'MESH')
+    model.data.materials[0].name = 'Renamed native animated material'
+    output = export_geom(animated_material)
+    binding = output.skeleton.float_channels[0]
+    assert binding.name_hash == (zlib.crc32(model.data.materials[0].name.encode()) ^ 0xFFFFFFFF)
+    with tempfile.TemporaryDirectory(prefix='dsts_material_animation_') as folder:
+        destination = Path(folder) / 'animated.geom'
+        output.to_file(str(destination))
+        reread = backend.Geom.from_file(str(destination))
+        assert reread.skeleton.float_channels[0].name_hash == reread.materials[0].name_hash
+        assert reread.skeleton.float_channels[0].array_index == (302 << 4)
+    print('PASS native material float binding, duplicate import, rename and ANIM curve roundtrip')
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode='EDIT')
+    moved = rig.data.edit_bones[0].matrix.copy()
+    moved.translation.x += .125
+    rig.data.edit_bones[0].matrix = moved
+    bpy.ops.object.mode_set(mode='OBJECT')
+    assert not export_geom(animated_material).bind_pose_snapshot_matches
+    print('PASS changed rest pose invalidates preserved native bind matrices')
+
+flagged_path = native_path.with_name('chr800.geom')
+if flagged_path.exists():
+    from Time_Stranger_Importer.src.skeleton import import_skeleton, export_skeleton
+    from Time_Stranger_Importer.src.utils import unflop
+    flagged = load_format_modules()[0].Geom.from_file(str(flagged_path))
+    rig, _ = import_skeleton(flagged.skeleton, coordinate_remap=unflop)
+    skeleton_copy = export_skeleton(rig)
+    def parent_records(raw):
+        count = struct.unpack_from('<H', raw, 14)[0]
+        bones = struct.unpack_from('<H', raw, 16)[0]
+        parent_table = struct.unpack_from('<I', raw, 28)[0] + 28
+        return raw[60:60 + 4 * count], raw[parent_table:parent_table + 2 * bones]
+    assert parent_records(skeleton_copy.to_bytes()) == parent_records(flagged.skeleton.to_bytes())
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode='EDIT')
+    child = next(b for b in rig.data.edit_bones if b.parent)
+    child.parent = None
+    bpy.ops.object.mode_set(mode='OBJECT')
+    try:
+        export_skeleton(rig).to_bytes()
+        raise AssertionError('Changing a flagged native hierarchy must fail explicitly')
+    except RuntimeError as error:
+        assert 'flagged' in str(error).lower()
+    print('PASS flagged native hierarchy preservation and changed-topology rejection')
 
 camera_path = Path(r"D:\Digimon Modding\Time Stranger Extracted\app_0.dx11\cam_chr039_bs01_pc.geom")
 if camera_path.exists():

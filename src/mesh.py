@@ -360,11 +360,8 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
             f"Material '{mat.name}' has no node tree. "
             "Use Borrow Material Setup before exporting."
         )
-    g_node = next(
-        (n for n in mat.node_tree.nodes
-         if n.type == "GROUP" and n.node_tree and n.node_tree.name == f"DSTS_Data-{mat.name}"),
-        None,
-    )
+    from .material import find_data_group
+    g_node = find_data_group(mat)
     if g_node is None:
         raise ValueError(
             f"Material '{mat.name}' has no DSTS_Data node group. "

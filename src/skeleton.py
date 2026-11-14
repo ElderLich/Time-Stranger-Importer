@@ -4,6 +4,8 @@ from mathutils import Matrix, Vector
 import sys
 import statistics
 import math
+import json
+import base64
 from . import dsts_formats
 
 def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
@@ -18,6 +20,10 @@ def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
     # Create Armature Data and Object
     armature_data = bpy.data.armatures.new("Skeleton")
     armature_obj = bpy.data.objects.new("Geom", armature_data)
+    if hasattr(skeleton, 'to_bytes'):
+        # This compact native skeleton also retains flagged/duplicate parent
+        # records which are not expressible through Blender's single parent.
+        armature_obj['DSTS_source_skeleton'] = base64.b64encode(skeleton.to_bytes()).decode('ascii')
     
     # Link to the target collection, fallback to current collection
     if target_collection is not None:
@@ -164,6 +170,7 @@ def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
 
     
     # Add custom geometry flag to Bone data (in Pose Mode/Object Mode)
+    source_indices = {bone.name: index for index, bone in enumerate(skeleton.bones)}
     for bone in skeleton.bones:
         if bone.name not in armature_data.bones:
             print(f"[DSTS] Warning: Bone '{bone.name}' not found in armature, skipping")
@@ -171,6 +178,14 @@ def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
 
         blender_bone = armature_data.bones[bone.name]
         blender_bone["DSTS_geometry"] = bone.is_geometry
+        blender_bone['DSTS_source_bone_index'] = source_indices[bone.name]
+        blender_bone['DSTS_source_rest'] = json.dumps({
+            'matrix': [value for row in blender_bone.matrix_local for value in row],
+            'parent': source_indices[bone.parent.name] if bone.parent else -1,
+            'position': [float(v) for v in bone.transform.position],
+            'quaternion': [float(v) for v in bone.transform.quaternion],
+            'scale': [float(v) for v in bone.transform.scale],
+        })
 
         rna_prop = blender_bone.id_properties_ui("DSTS_geometry")
         rna_prop.update(
@@ -178,11 +193,37 @@ def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
             default=bone.is_geometry
         )
 
+    if hasattr(skeleton, 'float_channels'):
+        armature_obj['DSTS_float_bindings'] = json.dumps([
+            {'name_hash':int(channel.name_hash),'array_index':int(channel.array_index),'flags':int(channel.flags)}
+            for channel in skeleton.float_channels])
+    inverse_remap = apply_remap_matrix(Matrix.Identity(4)).inverted()
+    armature_obj['DSTS_source_export_transform'] = [value for row in inverse_remap for value in row]
     return armature_obj, original_to_new_name
 
 def export_skeleton(skeleton_obj, coord_transform = Matrix.Rotation(math.radians(-90), 4, 'X')):
     skeleton = skeleton_obj.data
-    skeleton_out = dsts_formats.Skeleton()
+    if 'DSTS_source_skeleton' in skeleton_obj:
+        skeleton_out = dsts_formats.Skeleton.from_bytes(
+            base64.b64decode(skeleton_obj['DSTS_source_skeleton'], validate=True))
+        skeleton_out.bones.clear()
+        if hasattr(skeleton_out, 'float_channels'):
+            skeleton_out.float_channels.clear()
+    else:
+        skeleton_out = dsts_formats.Skeleton()
+    original_transform = skeleton_obj.get('DSTS_source_export_transform', [])
+    current_transform = [value for row in coord_transform for value in row]
+    matching_transform = len(original_transform) == 16 and all(
+        abs(a - b) < 1e-6 for a, b in zip(original_transform, current_transform))
+    bindings = json.loads(skeleton_obj.get('DSTS_float_bindings', '[]'))
+    if bindings and not hasattr(dsts_formats, 'FloatChannel'):
+        raise ValueError('This rig has native float bindings; install the updated geometry backend before exporting')
+    for row in bindings:
+        channel = dsts_formats.FloatChannel()
+        channel.name_hash = row['name_hash']
+        channel.array_index = row['array_index']
+        channel.flags = row['flags']
+        skeleton_out.float_channels.append(channel)
 
     name_to_bone = {}
     for bone in skeleton.bones:
@@ -205,6 +246,21 @@ def export_skeleton(skeleton_obj, coord_transform = Matrix.Rotation(math.radians
         bone_out.transform.position = position.to_4d()
         bone_out.transform.quaternion = (quaternion.x,quaternion.y,quaternion.z,quaternion.w)
         bone_out.transform.scale = scale.to_4d()
+
+        # Blender reconstructs rest matrices in float32. Keep the exact native
+        # TRS for an untouched bone, so source bind matrices remain reusable.
+        if matching_transform and 'DSTS_source_rest' in bone:
+            original = json.loads(bone['DSTS_source_rest'])
+            current_matrix = [value for row in bone.matrix_local for value in row]
+            parent_index = bone.parent.get('DSTS_source_bone_index', -2) if bone.parent else -1
+            parent_unchanged = bone.parent is None or (
+                'DSTS_source_rest' in bone.parent and
+                [value for row in bone.parent.matrix_local for value in row] ==
+                json.loads(bone.parent['DSTS_source_rest'])['matrix'])
+            if current_matrix == original['matrix'] and parent_index == original['parent'] and parent_unchanged:
+                bone_out.transform.position = original['position']
+                bone_out.transform.quaternion = original['quaternion']
+                bone_out.transform.scale = original['scale']
 
         bone_out.is_geometry = bone.get("DSTS_geometry", False)
 

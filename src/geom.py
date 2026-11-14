@@ -4,6 +4,7 @@ import re
 import base64
 import glob
 import math
+import zlib
 from .. import data
 from pathlib import Path
 from mathutils import Matrix
@@ -160,6 +161,8 @@ def _import_geom(context, filepath, images_folder=None):
         new_collection["unknown_0x30"] = geom.unknown_0x30
         new_collection["unknown_0x34"] = geom.unknown_0x34
         new_collection["CLUT"] = base64.b64encode(bytes(geom.clut)).decode("ascii")
+        if hasattr(geom, 'bind_pose_snapshot') and geom.bind_pose_snapshot:
+            new_collection['DSTS_bind_pose_snapshot'] = base64.b64encode(geom.bind_pose_snapshot).decode('ascii')
 
         skeleton_result = skeleton.import_skeleton(geom.skeleton, new_collection, utils.unflop)
         if isinstance(skeleton_result, tuple):
@@ -176,9 +179,11 @@ def _import_geom(context, filepath, images_folder=None):
 
         blender_materials = {}
         for mat_data in geom.materials:
+            source_name_hash = int(mat_data.name_hash)
             mat = bpy.data.materials.new(name=mat_data.name)
             mat_data.name = mat.name
             material.resolve_material(new_collection, mat, mat_data, texture_search_dirs)
+            mat['DSTS_source_name_hash'] = str(source_name_hash)
             blender_materials[mat_data.name] = mat
 
         for mesh_obj in geom.meshes:
@@ -194,7 +199,7 @@ def _import_geom(context, filepath, images_folder=None):
                 {"count": attr.count, "offset": attr.offset, "atype": attr.atype, "dtype": attr.dtype}
                 for attr in mesh_obj.mesh_attributes
             ]
-            g_node = next(n for n in mat.node_tree.nodes if n.type == "GROUP" and n.node_tree.name.startswith(f"DSTS_Data-{mat.name}"))
+            g_node = material.find_data_group(mat)
             data_node = next(n for n in g_node.node_tree.nodes if type(n) == data.material_nodes.ShaderDataNode)
             if len(data_node.attributes) == 0:
                 data_node.bytes_per_vertex = mesh_obj.bytes_per_vertex
@@ -203,8 +208,7 @@ def _import_geom(context, filepath, images_folder=None):
                     at.count, at.offset, at.atype, at.dtype = attr.values()
 
         error_list = dsts_formats.get_error_list()
-        error_list = [e for e in error_list if "float channels" not in e.lower() and "ibpm does not match" not in e.lower()
-                      and not (is_camera and "camera data" in e.lower())]
+        error_list = [e for e in error_list if not (is_camera and "camera data" in e.lower())]
         if error_list:
             new_collection['DSTS_import_warnings'] = '\n'.join(error_list)
             if bpy.app.background:
@@ -274,6 +278,10 @@ def export_geom(collection):
     _ensure_export_transforms_are_baked(collection)
 
     geom = dsts_formats.Geom()
+    if 'DSTS_bind_pose_snapshot' in collection:
+        if not hasattr(geom, 'bind_pose_snapshot'):
+            raise ValueError('This model has preserved native bind matrices; install the updated geometry backend')
+        geom.bind_pose_snapshot = base64.b64decode(collection['DSTS_bind_pose_snapshot'], validate=True)
     geom.unknown_0x10 = collection["unknown_0x10"]
     geom.unknown_0x30 = collection["unknown_0x30"]
     geom.unknown_0x34 = collection["unknown_0x34"]
@@ -299,16 +307,26 @@ def export_geom(collection):
         mat = obj.data.materials[0]
         if mat not in materials:
             materials.append(mat)
+    material_hash_map = {}
     for mat in materials:
         mat_data = material.export_material(mat)
+        mat_data.name = re.sub(r"(\.[0-9]{3})?$", "", mat_data.name)
         geom.materials.append(mat_data)
         name_to_mat[mat_data.name] = mat_data
+        if 'DSTS_source_name_hash' in mat:
+            material_hash_map[int(mat['DSTS_source_name_hash'])] = zlib.crc32(mat_data.name.encode('utf-8')) ^ 0xFFFFFFFF
 
     for obj in [o for o in collection.objects if o.type == "MESH"]:
         mesh_out = mesh.export_mesh_object(obj, geom.skeleton)
-        mat_name = obj.data.materials[0].name
+        mat_name = re.sub(r"(\.[0-9]{3})?$", "", obj.data.materials[0].name)
         mesh_out.material = name_to_mat[mat_name]
         geom.meshes.append(mesh_out)
+
+    for channel in getattr(geom.skeleton, 'float_channels', []):
+        if channel.flags == 8:
+            if channel.name_hash not in material_hash_map:
+                raise ValueError('A native material animation target was removed; preserve its material before export')
+            channel.name_hash = material_hash_map[channel.name_hash]
 
     for obj in [*geom.skeleton.bones] + [*geom.materials] + [*geom.meshes]:
         obj.name = re.sub(r"(\.[0-9]{3})?$", "", obj.name)
