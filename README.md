@@ -37,6 +37,11 @@ Python; the included build supports **CPython 3.13**. See
 3. Find **Digimon Time Stranger** under **File → Import/Export**, and the
    **DSTS** tab in the 3D View sidebar (`N`).
 
+New Century imports have their own **File → Import → Digimon New Century**
+submenu, immediately above **Digimon Next Order** when that add-on is enabled.
+It contains Model, Skill Phases and Cinematic Preview; native geometry,
+animation and effect imports stay under **Digimon Time Stranger**.
+
 Disable older DSTS Unified/Nymic/Romsstar add-ons that register the same menus.
 
 ## Workflow

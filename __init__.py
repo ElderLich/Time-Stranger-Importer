@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 4, 0),
+    "version": (1, 4, 1),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -2913,10 +2913,19 @@ class DSTS_MT_ImportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_GeomImport.bl_idname, text="Geometry (.geom)")
         layout.operator(DSTS_OT_AnimImport.bl_idname, text="Animation (.anim)")
         layout.separator()
-        layout.operator(DSTS_OT_NcGlbImport.bl_idname, text="New Century Model (.glb)")
-        layout.operator('import_scene.dsts_nc_skill', text="New Century Skill Phases (.glb)")
-        layout.operator(DSTS_OT_CinematicImport.bl_idname, text="New Century Cinematic Preview (.json)")
         layout.operator('import_scene.dsts_spark', text="Native Effect Graph (.sprk)")
+
+
+class DSTS_MT_NewCenturyImport(bpy.types.Menu):
+    """New Century imports kept separate from native Time Stranger formats"""
+    bl_idname = "DSTS_MT_new_century_import"
+    bl_label = "Digimon New Century"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(DSTS_OT_NcGlbImport.bl_idname, text="Model (.glb)")
+        layout.operator('import_scene.dsts_nc_skill', text="Skill Phases (.glb)")
+        layout.operator(DSTS_OT_CinematicImport.bl_idname, text="Cinematic Preview (.json)")
 
 
 class DSTS_MT_ExportSubmenu(bpy.types.Menu):
@@ -2939,6 +2948,21 @@ class DSTS_MT_ExportSubmenu(bpy.types.Menu):
 
 def menu_func_import(self, context):
     self.layout.menu(DSTS_MT_ImportSubmenu.bl_idname)
+    self.layout.menu(DSTS_MT_NewCenturyImport.bl_idname)
+
+
+def _order_digimon_import_menu():
+    # Blender's append/remove API maintains this dynamic callback list. Keep our
+    # two adjacent categories above Next Order regardless of add-on enable order.
+    callbacks = getattr(bpy.types.TOPBAR_MT_file_import.draw, '_draw_funcs', None)
+    if callbacks is None or menu_func_import not in callbacks:
+        return
+    next_order = next((callback for callback in callbacks
+                       if callback.__name__ == 'menu_import_next_order'
+                       and 'next_order' in callback.__module__.lower()), None)
+    if next_order is not None:
+        callbacks.remove(menu_func_import)
+        callbacks.insert(callbacks.index(next_order), menu_func_import)
 
 
 def menu_func_export(self, context):
@@ -2974,6 +2998,7 @@ CLASSES = (
     DSTS_PT_WorkflowPanel,
     DSTS_OT_ShowErrors,
     DSTS_MT_ImportSubmenu,
+    DSTS_MT_NewCenturyImport,
     DSTS_MT_ExportSubmenu,
 )
 
@@ -3023,6 +3048,7 @@ def register():
         default=False,
     )
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+    _order_digimon_import_menu()
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     from .data import material_nodes
     material_nodes.register()

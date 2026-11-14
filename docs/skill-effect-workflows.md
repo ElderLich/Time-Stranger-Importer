@@ -5,7 +5,7 @@ particle renderer or full release acceptance.
 
 ## Import the actual attack phase
 
-Use **File → Import → Digimon Time Stranger → New Century Skill Phases (.glb)**.
+Use **File → Import → Digimon New Century → Skill Phases (.glb)**.
 Select `model.glb` inside a captured New Century library. The operator finds the
 model's captured skill catalog without a hardcoded character ID. Choose
 **Primary attack phases** or one named phase. Cast, cinematic, held-pose,
