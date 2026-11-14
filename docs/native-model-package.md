@@ -62,6 +62,14 @@ No payload is rewritten; existing folders are rejected.
   aligned16 and matrix tables must fit in the file. The native matrix path at
   `0x14036680B` uses aligned SIMD operands; an eight-byte shift was an actual
   game-load crash, so this is a native safety check beyond offline round trips.
+- Meshes with the native contiguous-palette flag must reference an ascending,
+  contiguous skeleton range. A sparse or reordered list under this flag is
+  rejected: native upload otherwise uses different bones despite valid indices.
+- Every physical parent lane consumed by the native four-lane SIMD loop must
+  fit before the transform section, reference valid bones and avoid self-parenting.
+  This includes padding beyond a declared count that is not a multiple of four.
+  Native repeated root pairs are accepted; zero padding that overwrites the root
+  transform is rejected. The package does not silently repair either contract.
 - NLST names, numeric hashes, parents and types must match the parsed GEOM.
   Native repeated mesh-name records retain their multiplicity; unpadded native
   hex hashes compare correctly to padded exporter hashes.
@@ -101,6 +109,9 @@ blender --background --factory-startup --python-exit-code 1 --python tools/blend
 
 The local native chr050 fixture exercises byte-identical packaging, local versus
 external resource handling, missing/corrupt dependencies, actual aligned-matrix
-rejection, mismatched NLST/ANIM, motion scope, unsupported companions and existing
-destination preservation. Executed on Windows x64 Blender5.1.2 and5.3.0; other
+rejection, invalid fast palettes, mismatched NLST/ANIM, motion scope, unsupported
+companions and existing destination preservation. A native one-bone prop exercises
+valid repeated root pairs and the historical zero-padding failure. These checks
+also cover forensic inputs accepted by the reader but unsafe for native execution.
+Executed on Windows x64 Blender5.1.2 and5.3.0; other
 versions/platforms are unverified. Game assets are not committed with the test.

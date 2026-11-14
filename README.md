@@ -64,6 +64,12 @@ numeric uniforms, render settings and material flags. Give split materials
 distinct names before export. Splitting an animated material requires explicit
 float-channel remapping and is currently rejected.
 
+New NC meshes use their own indexed bone palettes. Borrowing a material retains
+the target mesh's palette mode instead of copying the donor's contiguous-bone
+assumption. Native imports preserve their original mode; export and packaging
+reject an incompatible sparse palette. Fresh skeleton exports also write valid
+native parent padding, preventing a one-bone effect from losing its placement.
+
 Importing the next NC model does **not** automatically bring its Unity shaders,
 particles, scenery, persistent effects or complete skill cinematic into the
 game. The model workflow handles the rig and supplied motion clips; it borrows

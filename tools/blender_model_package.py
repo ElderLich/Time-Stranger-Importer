@@ -18,7 +18,8 @@ addon = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = addon
 spec.loader.exec_module(addon)
 addon.register()
-from Time_Stranger_Importer.src.model_package import package_native_model, plan_model_package
+from Time_Stranger_Importer.src.model_package import package_native_model, plan_model_package, validate_runtime_skinning
+from Time_Stranger_Importer.src.backend import load_format_modules
 from Time_Stranger_Importer.src.anim.InterfaceHundredLine import AnimFileHundredLine
 from Time_Stranger_Importer.src.anim.BinaryHundredLine import AnimFileBinary
 
@@ -92,6 +93,64 @@ with tempfile.TemporaryDirectory(prefix='dsts_model_package_') as temp:
     rejects(lambda: package_native_model(model, temp/'unaligned', native, False), 'alignment')
     assert not (temp/'unaligned').exists()
     model.write_bytes(original_geom)
+    # A forensic read retains the native fast-palette bit. Packaging unchanged
+    # bytes must independently reject a list that would use the wrong bones.
+    damaged = bytearray(original_geom)
+    mesh_base = struct.unpack_from('<Q', damaged, 0x48)[0]
+    mesh_count = struct.unpack_from('<H', damaged, 4)[0]
+    mesh_header = next(mesh_base+i*128 for i in range(mesh_count)
+                       if struct.unpack_from('<H', damaged, mesh_base+i*128+40)[0] >= 2)
+    palette_start = struct.unpack_from('<Q', damaged, mesh_header+16)[0]
+    damaged[mesh_header+49] |= 4
+    damaged[palette_start+4:palette_start+8] = damaged[palette_start:palette_start+4]
+    model.write_bytes(damaged)
+    rejects(lambda: package_native_model(model, temp/'bad_palette', native, False), 'contiguous ascending')
+    assert not (temp/'bad_palette').exists()
+    model.write_bytes(original_geom)
+
+    # Native one-bone fixtures duplicate their root pair across four SIMD
+    # lanes. The historical writer's undeclared zero padding is readable but
+    # causes the native routine to overwrite the Figure's root transform.
+    backend = load_format_modules()[0]
+    fresh = backend.Skeleton()
+    fresh_root = backend.Bone()
+    fresh_root.name = 'Runtime root'
+    fresh_root.transform.quaternion = [0, 0, 0, 1]
+    fresh_root.transform.position = [0, 0, 0, 1]
+    fresh_root.transform.scale = [1, 1, 1, 1]
+    fresh.bones = [fresh_root]
+    fresh_bytes = fresh.to_bytes()
+    assert struct.unpack_from('<I', fresh_bytes, 60)[0] == 4
+    assert [struct.unpack_from('<HH', fresh_bytes, 64+i*4) for i in range(4)] == [(0, 0x7FFF)]*4
+    print('PASS bundled backend exports four valid native root lanes for a fresh skeleton')
+    one_bone = (native/'t0109traffic01d.geom').read_bytes()
+    # This native prop has a known bounds diagnostic. Normalize only the
+    # temporary test copy through the writer; retain its native four root pairs.
+    old_throw, old_errors = backend.get_throw_errors(), backend.get_error_list()
+    try:
+        backend.set_throw_errors(False)
+        backend.set_error_list([])
+        one_geom = backend.Geom.from_bytes(one_bone)
+    finally:
+        backend.set_throw_errors(old_throw)
+        backend.set_error_list(old_errors)
+    one_bone = one_geom.to_bytes()
+    one_geom = backend.Geom.from_bytes(one_bone)
+    assert len(one_geom.skeleton.bones) == 1
+    valid_skinning = validate_runtime_skinning(one_bone, one_geom)
+    assert valid_skinning['runtime_parent_lanes'] == 4
+    skeleton = struct.unpack_from('<Q', one_bone, 0x98)[0]
+    damaged = bytearray(one_bone)
+    struct.pack_into('<I', damaged, skeleton+60, 1)
+    damaged[skeleton+68:skeleton+80] = bytes(12)
+    # Prove this remains parseable; the packaging guard covers native execution.
+    backend.Geom.from_bytes(bytes(damaged))
+    model.write_bytes(damaged)
+    rejects(lambda: package_native_model(model, temp/'bad_parent_lanes', native, False), 'self-parented')
+    assert not (temp/'bad_parent_lanes').exists()
+    model.write_bytes(original_geom)
+    print('PASS native fast-palette and rounded SIMD parent-lane rejection')
+
     model.with_suffix('.nlst').write_bytes(original_nlst.replace(b'GRP_joint', b'BAD_joint', 1))
     rejects(lambda: plan_model_package(model, native, False), 'NLST')
     model.with_suffix('.nlst').write_bytes(original_nlst)

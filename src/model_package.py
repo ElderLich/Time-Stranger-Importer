@@ -47,6 +47,44 @@ def validate_matrix_alignment(raw, bone_count):
     return offsets
 
 
+def validate_runtime_skinning(raw, geom):
+    """Reject runtime-unsafe palettes/physical parent lanes without rewriting.
+
+    The Formats reader intentionally retains forensic inputs. Native 2E63A0
+    assumes a contiguous palette under mesh flag_2, while 364850 consumes all
+    four lanes in a parent block, including bytes beyond a nonmultiple count.
+    """
+    bones = list(geom.skeleton.bones)
+    bone_indices = {bone: index for index, bone in enumerate(bones)}
+    fast_palettes = []
+    for mesh in geom.meshes:
+        if not mesh.flag_2:
+            continue
+        indices = [bone_indices[bone] for bone in mesh.matrix_palette]
+        if not indices or indices != list(range(indices[0], indices[0]+len(indices))):
+            raise ValueError(f'{mesh.name}: flag_2 requires a contiguous ascending skeleton matrix palette; '
+                             'repair the model explicitly before packaging')
+        fast_palettes.append({'mesh': mesh.name, 'first': indices[0], 'count': len(indices)})
+    skeleton = struct.unpack_from('<Q', raw, 0x98)[0]
+    if not 0xB0 <= skeleton <= len(raw)-64:
+        raise ValueError('Truncated native skeleton parent header')
+    count = struct.unpack_from('<I', raw, skeleton+60)[0]
+    rounded = (count+3)//4*4
+    transforms = skeleton+24+struct.unpack_from('<I', raw, skeleton+24)[0]
+    if skeleton+64+rounded*4 > min(transforms, len(raw)):
+        raise ValueError('Native SIMD parent block exceeds the physical parent table')
+    for index in range(rounded):
+        child, parent = struct.unpack_from('<HH', raw, skeleton+64+index*4)
+        parent &= 0x7FFF
+        if child >= len(bones) or parent < 0x4000 and parent >= len(bones):
+            raise ValueError(f'Native SIMD parent lane {index} has an out-of-range bone')
+        if child == parent:
+            raise ValueError(f'Native SIMD parent lane {index} is self-parented; '
+                             'physical padding would overwrite the root transform')
+    return {'contiguous_fast_palettes': fast_palettes, 'declared_parent_pairs': count,
+            'runtime_parent_lanes': rounded}
+
+
 def _validate_shader(raw, name):
     if len(raw) < 32 or raw[:4] != b'DXBC':
         raise ValueError(f'{name}: expected native DXBC shader bytes')
@@ -127,6 +165,7 @@ def plan_model_package(geom_path, resource_root=None, include_motions=True):
         backend.set_error_list(old_errors)
     bones, floats = len(geom.skeleton.bones), len(geom.skeleton.float_channels)
     alignment = validate_matrix_alignment(raw, bones)
+    skinning = validate_runtime_skinning(raw, geom)
     nlst = path.with_suffix('.nlst')
     nlst_bytes = nlst.read_bytes()
     if _nlst_rows(nlst_bytes.decode('utf-8-sig')) != _nlst_rows(write_nlst(geom)):
@@ -190,6 +229,7 @@ def plan_model_package(geom_path, resource_root=None, include_motions=True):
         'scope': 'One existing native mesh model with its base and optional same-stem motions',
         'runtime_verified': False, 'bones': bones, 'float_channels': floats,
         'matrix_offsets': alignment, 'material_passes': pass_info, 'animations': animation_info,
+        'native_skinning': skinning,
         'files': {name: {'sha256': _sha(data), 'bytes': len(data), 'source': sources[name]} for name, data in sorted(files.items())},
         'external_native_dependencies': external,
         'limitations': ['No Unity shader or particle conversion; native shader bytes are retained exactly.',

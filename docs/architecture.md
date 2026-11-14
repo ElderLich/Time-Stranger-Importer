@@ -181,10 +181,29 @@ The material-contract check uses the local native body donor (or chr050), splits
 its Blender material, edits one atlas/numeric value and verifies the other copy
 is unchanged. It compares every pass, uniform, setting and exposed metadata word
 through `.blend` save/reload and GEOM serialization, and rejects a truncated pass
-table or matrix-as-texture binding. The updated backend and full smoke suite
-passed Blender 5.1.2 and 5.3.0; the full NC export also passed 5.1.2. The backend
-is built from Formats commit `d152d99`, CPython 3.13 Windows x64, not renamed
-from another ABI.
+table or matrix-as-texture binding. Its historical donor's invalid sparse fast
+palette is explicitly rejected without truncating an existing destination, then
+repaired only in the temporary test object before unrelated material checks.
+The updated backend, full smoke/NC export, material and package checks passed
+Blender 5.1.2 and 5.3.0. The backend is built from Formats commit `a6b03ae`,
+CPython 3.13 Windows x64, SHA256
+`fb45694aa8682d5b5dbc5e9798eb470e4f4d961b87256d6d341c7a946c939bed`.
+It was not renamed from another ABI.
+
+Native matrix upload ignores later palette indices when mesh `flag_2` is set;
+only an ascending contiguous skeleton range is valid. New NC geometry therefore
+uses indexed gathering. Borrow Material Setup retains the target's palette mode;
+ordinary native import retains its original flag for inspection. The backend
+writer and exact-byte packager reject invalid flagged palettes. The sidebar
+names the flag **Contiguous bone palette** so intentional edits are reviewable.
+
+The native skeleton evaluator executes every lane of a four-pair parent block.
+New or regenerated skeletons now fill and count those lanes with repeated valid
+pairs instead of zero `(0,0)` self-parent operations. Unchanged imported pair
+records and physical tails are preserved, including forensic legacy failures;
+reading or rewriting such a file is not a repair. The exact-byte packager checks
+the physical lanes and refuses unsafe inputs before output. These guards change
+neither the completed bind-pose conventions nor animation axes.
 
 The smoke tests establish serializer and Blender behavior. In-game rendering,
 particle parity and optical-camera equivalence need separate game validation.

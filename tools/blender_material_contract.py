@@ -53,6 +53,29 @@ if not source_path.exists():
 if not source_path.exists():
     raise RuntimeError('The native body donor fixture is required for this regression')
 source = backend.Geom.from_file(str(source_path))
+# The historical conversion donor can retain the now-proven invalid sparse
+# fast-palette bit. Keep that forensic fixture unchanged, verify atomic writer
+# rejection, then explicitly repair only its temporary in-memory geometry so
+# the material contract below can be tested independently.
+bone_indices = {bone: index for index, bone in enumerate(source.skeleton.bones)}
+invalid_fast = []
+for mesh in source.meshes:
+    indices = [bone_indices[bone] for bone in mesh.matrix_palette]
+    if mesh.flag_2 and indices != list(range(indices[0], indices[0]+len(indices))):
+        invalid_fast.append(mesh)
+if invalid_fast:
+    with tempfile.TemporaryDirectory(prefix='dsts_invalid_palette_') as folder:
+        destination = Path(folder)/'existing.geom'
+        destination.write_bytes(b'preserve existing destination')
+        try:
+            source.to_file(str(destination))
+            raise AssertionError('Sparse native fast palette must not export')
+        except RuntimeError as exc:
+            assert 'contiguous ascending' in str(exc)
+        assert destination.read_bytes() == b'preserve existing destination'
+    for mesh in invalid_fast:
+        mesh.flag_2 = False
+    print('PASS legacy sparse fast-palette rejection; explicit temporary gather-mode repair')
 native = next(m for m in source.materials if m.unknown_0x324 & 0x400)
 assert any(u.uniform_type == 'float' for u in native.uniforms)
 assert len(native.settings) > 0

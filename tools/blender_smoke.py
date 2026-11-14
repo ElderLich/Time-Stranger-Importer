@@ -23,6 +23,18 @@ from Time_Stranger_Importer.src.backend import load_format_modules
 
 print("RUNTIME", bpy.app.version_string, sys.version)
 load_format_modules()
+backend = load_format_modules()[0]
+borrow_target = bpy.data.meshes.new('Borrowed render flags')
+borrow_donor = backend.Mesh()
+borrow_donor.flag_2 = True
+borrow_donor.flag_3 = True
+addon._copy_mesh_flags_from_donor(borrow_target, borrow_donor)
+assert not borrow_target['DSTS_flag_2'] and borrow_target['DSTS_flag_3']
+borrow_target['DSTS_flag_2'] = True
+borrow_donor.flag_2 = False
+addon._copy_mesh_flags_from_donor(borrow_target, borrow_donor)
+assert borrow_target['DSTS_flag_2'], 'Borrowing materials must retain the target geometry palette mode'
+print('PASS borrowed render flags preserve target palette ownership')
 arm = bpy.data.objects.new("Test Rig", bpy.data.armatures.new("Test Rig"))
 bpy.context.scene.collection.objects.link(arm)
 bpy.context.view_layer.objects.active = arm
@@ -497,6 +509,10 @@ if '--nc-export' in sys.argv:
     native_groups = [find_data_group(m).node_tree for m in body_materials]
     assert len(set(native_groups)) == len(native_groups), 'Body atlas materials must own independent native groups'
     geometry = export_geom(collection)
+    assert all(not mesh.flag_2 for mesh in geometry.meshes), 'New NC meshes require indexed bone gathering'
+    bone_indices = {bone: index for index, bone in enumerate(geometry.skeleton.bones)}
+    palettes = [[bone_indices[bone] for bone in mesh.matrix_palette] for mesh in geometry.meshes]
+    assert any(indices != list(range(indices[0], indices[0]+len(indices))) for indices in palettes if indices)
     track = next(t for t in rig.animation_data.nla_tracks if t.name == 'skill2_display')
     assert abs(track.strips[0].action_frame_end - track.strips[0].action_frame_start - 260) < .01
     idle = next(t for t in rig.animation_data.nla_tracks if t.name == 'idle')

@@ -1188,6 +1188,10 @@ def _import_donor(context, donor_path):
     def mesh_info(obj):
         material = obj.data.materials[0] if obj.data.materials else None
         flags = {key: bool(obj.data.get(key, key == "DSTS_flag_0")) for key in _FLAG_KEYS}
+        # These flags go to newly skinned NC meshes. Native bit2 assumes the
+        # donor's contiguous skeleton range; the new palette can be sparse.
+        # Indexed gathering preserves every declared bone without that premise.
+        flags["DSTS_flag_2"] = False
         return {"material": material, "flags": flags, "name": obj.name}
 
     body_infos = []

@@ -694,24 +694,24 @@ def _seed_rest_pose_into_action(armature, action, frame=1.0):
     return seeded
 
 
-# Per-mesh flag byte (TS .geom): bit0 isRendered, bit1 isWireframe, bits 2-7
-# unknown. Export defaults to flag_0=True and the rest False, so a custom mesh
-# that never copied a donor's flags silently ships the wrong byte. This mirrors
-# those export defaults when a donor attribute is somehow absent.
+# Per-mesh flag byte: bit2 selects contiguous skeleton-palette upload and belongs
+# to the target geometry. Preserve it when borrowing material/render metadata.
+# The other defaults mirror the exporter when a donor attribute is absent.
 _DSTS_MESH_FLAG_DEFAULTS = (True, False, False, False, False, False, False, False)
 
 
 def _copy_mesh_flags_from_donor(mesh_data, donor_mesh):
-    """Copy the donor mesh's flag byte (flag_0..flag_7) onto a target mesh datablock.
+    """Borrow donor render flags while retaining the target's palette mode.
 
     Stores them as the same ``DSTS_flag_N`` custom properties the exporter reads
-    (src/mesh.py), so a borrowed mesh exports the donor's flags instead of the
-    hardcoded defaults. Returns True if anything was written.
+    (src/mesh.py). A new target defaults to indexed gathering: its bones need
+    not form the donor's contiguous range. Returns True if anything was written.
     """
     if mesh_data is None or donor_mesh is None:
         return False
     for i in range(8):
-        value = bool(getattr(donor_mesh, f"flag_{i}", _DSTS_MESH_FLAG_DEFAULTS[i]))
+        value = (bool(mesh_data.get("DSTS_flag_2", False)) if i == 2 else
+                 bool(getattr(donor_mesh, f"flag_{i}", _DSTS_MESH_FLAG_DEFAULTS[i])))
         mesh_data[f"DSTS_flag_{i}"] = value
     return True
 
@@ -2749,7 +2749,7 @@ class DSTS_PT_WorkflowPanel(Panel):
             box = layout.box()
             box.label(text="Mesh Flags (active mesh)")
             mesh_data = active.data
-            flag_labels = ("isRendered", "isWireframe", "flag 2", "flag 3",
+            flag_labels = ("isRendered", "isWireframe", "Contiguous bone palette", "flag 3",
                            "flag 4", "flag 5", "flag 6", "flag 7")
             if "DSTS_flag_0" in mesh_data.keys():
                 for i, label_text in enumerate(flag_labels):
