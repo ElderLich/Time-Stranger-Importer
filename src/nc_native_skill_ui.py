@@ -15,6 +15,8 @@ from . import skill_conversion as compiler
 
 
 _PHASE_ITEMS = {}
+_PRODUCER_STATE_FIELDS = ('producer_job_json', 'producer_job_pin_json', 'producer_report_json',
+                          'producer_result_json', 'producer_output')
 
 
 def phase_items(self, context):
@@ -74,6 +76,12 @@ class DSTS_PG_NativeSkill(PropertyGroup):
         description='Native NLST to verify target socket names for this candidate')
     output: StringProperty(name='New Candidate Folder', subtype='DIR_PATH',
         description='Choose a new isolated folder; existing destinations are protected')
+    producer_job_json: StringProperty(options={'HIDDEN'})
+    producer_job_pin_json: StringProperty(options={'HIDDEN'})
+    producer_report_json: StringProperty(options={'HIDDEN'})
+    producer_result_json: StringProperty(options={'HIDDEN'})
+    producer_output: StringProperty(name='New Components Folder', subtype='DIR_PATH',
+        description='New folder for components generated from a reviewed source bake and material carriers')
     sockets: CollectionProperty(type=DSTS_PG_SkillSocket)
     cues: CollectionProperty(type=DSTS_PG_SkillCue)
     components: CollectionProperty(type=DSTS_PG_SkillComponent)
@@ -134,6 +142,8 @@ def load_recipe(scene, recipe):
     state.recipe_json = _json(recipe)
     state.report_json = state.inspected_recipe_json = ''
     state.output = ''
+    for field in _PRODUCER_STATE_FIELDS:
+        setattr(state, field, '')
     scene.dsts_nc_model_path = source['model_path']
     for field in ('model_stem', 'motion_suffix'):
         setattr(state, field, target.get(field) or '')
@@ -285,6 +295,116 @@ class DSTS_OT_NativeSkillRemove(Operator):
         return {'FINISHED'}
 
 
+def producer_job(scene):
+    """Read saved job controls without repinning a changed input file."""
+    state = scene.dsts_native_skill
+    if not state.producer_job_json or not state.producer_job_pin_json:
+        raise ValueError('Load a reviewed component job first')
+    pin = json.loads(state.producer_job_pin_json)
+    if compiler.pin_file(pin['path']) != pin:
+        raise ValueError('Component job changed; load it again before inspecting')
+    job = json.loads(state.producer_job_json)
+    if job != json.loads(Path(pin['path']).read_text(encoding='utf-8')):
+        raise ValueError('Saved component job differs from its pinned file; load it again')
+    if job.get('source') != scene_recipe(scene)['source']:
+        raise ValueError('Component job source differs from this scene recipe')
+    return job
+
+
+class DSTS_OT_NativeSkillProducerLoad(Operator, ImportHelper):
+    bl_idname = 'import_scene.dsts_native_skill_producer_job'
+    bl_label = 'Load Component Job'
+    bl_description = 'Choose a reviewed source bake and material-carrier job for generating native local-mesh components'
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = '.json'
+    filter_glob: StringProperty(default='*.json', options={'HIDDEN'})
+
+    def execute(self, context):
+        try:
+            from .skill_conversion.finite_producer import inspect_finite_job
+            pin = compiler.pin_file(_path(self.filepath))
+            job = json.loads(Path(pin['path']).read_text(encoding='utf-8'))
+            if job.get('source') != scene_recipe(context.scene)['source']:
+                raise ValueError('Choose a component job for this scene\'s captured source phase')
+            report = inspect_finite_job(job)
+            state = context.scene.dsts_native_skill
+            state.producer_job_json, state.producer_job_pin_json = _json(job), _json(pin)
+            state.producer_report_json = _json(report)
+            state.producer_result_json = state.producer_output = ''
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, 'Component job loaded; review its supported nodes and requirements')
+        return {'FINISHED'}
+
+
+class DSTS_OT_NativeSkillProducerInspect(Operator):
+    bl_idname = 'dsts.native_skill_producer_inspect'
+    bl_label = 'Inspect Component Job'
+    bl_description = 'Recheck the saved source bake, material carriers, donor pins and selected mesh profiles before generation'
+
+    def execute(self, context):
+        state = context.scene.dsts_native_skill
+        try:
+            from .skill_conversion.finite_producer import inspect_finite_job
+            report = inspect_finite_job(producer_job(context.scene))
+            state.producer_report_json = _json(report)
+        except Exception as exc:
+            state.producer_report_json = ''
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, 'Component job inspection updated')
+        return {'FINISHED'}
+
+
+class DSTS_OT_NativeSkillProduce(Operator):
+    bl_idname = 'export_scene.dsts_native_skill_components'
+    bl_label = 'Generate and Add Components'
+    bl_description = 'Generate reviewed local-mesh native resources in a new folder and add their pinned manifests to this recipe'
+
+    def execute(self, context):
+        state = context.scene.dsts_native_skill
+        try:
+            from .skill_conversion.finite_producer import produce_finite_components
+            job = producer_job(context.scene)
+            if not state.producer_report_json:
+                raise ValueError('Inspect the component job before generating')
+            inspection = json.loads(state.producer_report_json)
+            if not inspection.get('buildable'):
+                raise ValueError('Resolve the component job errors before generating')
+            if not state.producer_output:
+                raise ValueError('Choose a new components folder')
+            recipe = scene_recipe(context.scene)
+            selected = set(job['node_indices'])
+            for pin in recipe['components']:
+                if compiler.pin_file(pin['path']) != pin:
+                    raise ValueError('An existing recipe component changed; inspect the recipe first')
+                component = json.loads(Path(pin['path']).read_text(encoding='utf-8'))
+                source = component.get('source', {})
+                if (component.get('kind') == 'effect' and source.get('event_order') == job['event_order']
+                        and source.get('node_index') in selected):
+                    raise ValueError('Remove the selected nodes\' existing components before generating replacements')
+            result = produce_finite_components(job, _path(state.producer_output),
+                                                expected_plan_sha256=inspection['plan_sha256'])
+            proposed = copy.deepcopy(recipe)
+            proposed['components'].extend(result['components'])
+            review = compiler.inspect_recipe(proposed)
+            if review['errors']:
+                raise ValueError('Components were saved, but recipe validation failed: ' +
+                                 '; '.join(row['message'] for row in review['errors']))
+            # Publish scene changes only after every generated component validates.
+            for pin in result['components']:
+                item = state.components.add()
+                item.path, item.pin_json = pin['path'], _json(pin)
+            state.producer_result_json = _json(result)
+            state.report_json = state.inspected_recipe_json = ''
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, 'Generated components added; inspect the complete recipe before building')
+        return {'FINISHED'}
+
+
 class DSTS_OT_NativeSkillInspect(Operator):
     bl_idname = 'dsts.native_skill_inspect'
     bl_label = 'Inspect Conversion'
@@ -310,13 +430,17 @@ class DSTS_OT_NativeSkillInspect(Operator):
 class DSTS_OT_NativeSkillReport(Operator):
     bl_idname = 'dsts.native_skill_report'
     bl_label = 'Open Full Review'
-    bl_description = 'Show the complete conversion review, source provenance and unresolved requirements in a text editor'
+    bl_description = 'Show the complete conversion or component-generation review, source provenance and unresolved requirements'
+    section: EnumProperty(items=[('recipe', 'Recipe', 'Complete native skill conversion review'),
+                                 ('producer', 'Component Job', 'Selected and omitted source nodes, input pins and generation limits')],
+                          default='recipe')
 
     def execute(self, context):
-        report = context.scene.dsts_native_skill.report_json
+        state = context.scene.dsts_native_skill
+        report = state.producer_report_json if self.section == 'producer' else state.report_json
         if not report:
             return {'CANCELLED'}
-        text = bpy.data.texts.new('Native Skill Review')
+        text = bpy.data.texts.new('Component Generation Review' if self.section == 'producer' else 'Native Skill Review')
         text.write(json.dumps(json.loads(report), indent=2, ensure_ascii=False))
         if context.area:
             context.area.type = 'TEXT_EDITOR'
@@ -333,9 +457,13 @@ class DSTS_OT_NativeSkillPreview(Operator):
     def execute(self, context):
         try:
             recipe = scene_recipe(context.scene)
+            producer_state = {field: getattr(context.scene.dsts_native_skill, field)
+                              for field in _PRODUCER_STATE_FIELDS}
             scenes = nc_skill_ui.import_related_skills(context, recipe['source']['model_path'], recipe['source']['phase_id'])
             for scene in scenes:
                 load_recipe(scene, copy.deepcopy(recipe))
+                for field, value in producer_state.items():
+                    setattr(scene.dsts_native_skill, field, value)
         except Exception as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
@@ -411,6 +539,20 @@ class DSTS_PT_NativeSkill(Panel):
             row.label(text=Path(item.path).name)
             row.operator(DSTS_OT_NativeSkillRemove.bl_idname, text='', icon='X').index = index
         box.operator(DSTS_OT_NativeSkillComponent.bl_idname, icon='ADD')
+        box = layout.box()
+        box.label(text='Generate from reviewed source inputs')
+        box.operator(DSTS_OT_NativeSkillProducerLoad.bl_idname, icon='FILE_FOLDER')
+        if state.producer_job_json:
+            box.operator(DSTS_OT_NativeSkillProducerInspect.bl_idname, icon='VIEWZOOM')
+            if state.producer_report_json:
+                producer = json.loads(state.producer_report_json)
+                box.label(text=f"Selected source nodes: {len(producer.get('selected_nodes', []))}")
+                for message in producer.get('errors', [])[:4]:
+                    for line in textwrap.wrap(str(message['message']), width=48):
+                        box.label(text=line, icon='ERROR')
+                box.operator(DSTS_OT_NativeSkillReport.bl_idname, text='Open Component Review', icon='TEXT').section = 'producer'
+            box.prop(state, 'producer_output')
+            box.operator(DSTS_OT_NativeSkillProduce.bl_idname, icon='EXPORT')
         layout.operator(DSTS_OT_NativeSkillInspect.bl_idname, icon='VIEWZOOM')
         if state.report_json:
             report = json.loads(state.report_json)
@@ -421,7 +563,7 @@ class DSTS_PT_NativeSkill(Panel):
                 for item in coverage.get('uncovered', [])[:8]:
                     box.label(text=f"Node {item['node_index']}: {item['node_path'].rsplit('/', 1)[-1]}", icon='ERROR')
                     reasons = item.get('reasons') or [item['status']]
-                    for line in textwrap.wrap(str(reasons[0]), width=48):
+                    for line in textwrap.wrap(str(reasons[-1]), width=48):
                         box.label(text=line)
             messages = dict.fromkeys(row['message'] for row in report.get('errors', []) + report.get('blockers', []))
             for message in list(messages)[:6]:
@@ -434,6 +576,7 @@ class DSTS_PT_NativeSkill(Panel):
 
 CLASSES = (DSTS_PG_SkillSocket, DSTS_PG_SkillCue, DSTS_PG_SkillComponent, DSTS_PG_NativeSkill,
            DSTS_OT_NativeSkillCreate, DSTS_OT_NativeSkillLoad, DSTS_OT_NativeSkillComponent,
+           DSTS_OT_NativeSkillProducerLoad, DSTS_OT_NativeSkillProducerInspect, DSTS_OT_NativeSkillProduce,
            DSTS_OT_NativeSkillRemove, DSTS_OT_NativeSkillInspect, DSTS_OT_NativeSkillReport,
            DSTS_OT_NativeSkillPreview, DSTS_OT_NativeSkillBuild, DSTS_PT_NativeSkill)
 

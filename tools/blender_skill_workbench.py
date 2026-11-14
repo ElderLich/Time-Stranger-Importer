@@ -10,9 +10,12 @@ import bpy
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--addon-root', type=Path, required=True)
 parser.add_argument('--recipes', type=Path, nargs='+', required=True)
+parser.add_argument('--producer-jobs', type=Path, nargs='*', default=[],
+                    help='Optional reviewed jobs to retain in their matching source scenes')
 parser.add_argument('--output', type=Path, required=True, help='New workbench folder')
 args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
 root, output = args.addon_root.resolve(), args.output.resolve()
+jobs = [(path.resolve(), json.loads(path.read_text(encoding='utf-8'))) for path in args.producer_jobs]
 if output.exists():
     raise FileExistsError('Workbench output already exists')
 spec = importlib.util.spec_from_file_location('Time_Stranger_Importer', root / '__init__.py',
@@ -40,12 +43,19 @@ for path in args.recipes:
     inspection = json.loads(state.report_json)
     assert inspection['buildable'], inspection['errors']
     name = recipe['source']['model_code'] + '-' + recipe['source']['phase_id'].replace(':', '-')
+    matching = [path for path, job in jobs if job.get('source') == recipe['source']]
+    if len(matching) > 1:
+        raise ValueError('Choose at most one producer job for each scene source')
+    if matching:
+        assert bpy.ops.import_scene.dsts_native_skill_producer_job(filepath=str(matching[0])) == {'FINISHED'}
+        state.producer_output = str(output / (name + '-generated-components'))
     state.output = str(output / (name + '-candidate'))
     assert bpy.ops.export_scene.dsts_native_skill_candidate() == {'FINISHED'}
     records.append({'scene': scene.name, 'phase': recipe['source']['phase_id'],
                     'source_clip': recipe['source']['phase']['actor_clip'],
                     'recipe': ui.scene_recipe(scene), 'plan_sha256': inspection['plan_sha256'],
-                    'candidate': state.output})
+                    'candidate': state.output, 'producer_job_pin': state.producer_job_pin_json,
+                    'producer_output': state.producer_output})
     scene['DSTS_skill_review_only'] = True
     scene['DSTS_skill_review_note'] = 'Native review assets; target routing and full gameplay acceptance remain incomplete.'
 
@@ -60,6 +70,10 @@ for record in records:
     assert scene.get('DSTS_preview_reset_actor')
     assert ui.scene_recipe(scene) == record['recipe']
     assert json.loads(scene.dsts_native_skill.report_json)['plan_sha256'] == record['plan_sha256']
+    assert scene.dsts_native_skill.producer_job_pin_json == record['producer_job_pin']
+    assert scene.dsts_native_skill.producer_output == record['producer_output']
+    if record['producer_job_pin']:
+        assert ui.producer_job(scene)['source'] == record['recipe']['source']
     candidate = json.loads((Path(record['candidate']) / 'candidate.json').read_text(encoding='utf-8'))
     assert candidate['installable'] is False
     record['resources'] = len(candidate['files'])

@@ -26,6 +26,8 @@ test_root = Path(__file__).resolve().parents[1] / 'tests'
 for profile, filename, binding in (
         ('mesh_profile', 'test_skill_mesh_profile.py', 'profile'),
         ('billboard_profile', 'test_skill_billboard_profile.py', 'profile'),
+        ('view_mesh_profile', 'test_skill_view_mesh_profile.py', 'profile'),
+        ('finite_producer', 'test_skill_finite_producer.py', 'producer'),
         ('coverage', 'test_skill_coverage.py', 'inspect_coverage')):
     actual = importlib.import_module('Time_Stranger_Importer.src.skill_conversion.' + profile)
     assert Path(actual.__file__).resolve().is_relative_to(root)
@@ -34,8 +36,9 @@ for profile, filename, binding in (
     testspec.loader.exec_module(cases)
     # Test fixtures and independent expected values stay unchanged. All calls
     # under test are rebound to the actual installed implementation, not a copy.
-    setattr(cases, binding, actual if binding == 'profile' else actual.inspect_coverage)
-    assert getattr(cases, binding) is (actual if binding == 'profile' else actual.inspect_coverage)
+    implementation = actual if binding in ('profile', 'producer') else getattr(actual, binding)
+    setattr(cases, binding, implementation)
+    assert getattr(cases, binding) is implementation
     suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(cases))
     records.append({'module': profile, 'path': str(Path(actual.__file__).resolve()),
                     'sha256': hashlib.sha256(Path(actual.__file__).read_bytes()).hexdigest()})

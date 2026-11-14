@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 4, 7),
+    "version": (1, 4, 8),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",

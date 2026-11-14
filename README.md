@@ -60,6 +60,11 @@ Choose **Native Skill Recipe** from the New Century import menu, then use
 caster/target sockets, donors and audio cues; add reviewed component manifests,
 inspect the requirements and build into a new isolated folder. The recipe and
 review persist in the `.blend`. See [the recipe workflow and API](docs/skill-conversion.md).
+For supported local meshes, **Load Component Job** selects a pinned source bake,
+reviewed material carriers and native donors. **Generate and Add Components**
+authors the native particle resources and adds them to the recipe, without
+editing per-skill scripts. See [component generation](docs/finite-producer.md)
+for the required inputs and supported profile.
 This produces native review assets; complete effect coverage, target routing,
 actor lifecycle and in-game acceptance remain required before installation.
 
