@@ -58,6 +58,14 @@ class SyncTests(unittest.TestCase):
             installer.sync(self.zip, self.root, ['5.1', '5.3'], True)
         self.assertEqual((self.targets[0] / '__init__.py').read_bytes(), b'old source')
 
+    def test_unreadable_installation_is_not_treated_as_empty(self):
+        with patch.object(installer.os, 'scandir', side_effect=PermissionError('access denied')):
+            with self.assertRaises(PermissionError):
+                installer.sync(self.zip, self.root, ['5.1', '5.3'], True)
+        for target in self.targets:
+            self.assertEqual((target / '__init__.py').read_bytes(), b'old source')
+            self.assertEqual((target / 'custom.txt').read_bytes(), b'user local data')
+
 
 if __name__ == '__main__':
     unittest.main()

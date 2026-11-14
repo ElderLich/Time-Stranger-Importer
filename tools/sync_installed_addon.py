@@ -45,9 +45,23 @@ def read_package(path):
 
 
 def hashes(root):
-    return {p.relative_to(root).as_posix(): digest(p.read_bytes())
-            for p in sorted(root.rglob("*")) if p.is_file()
-            and "__pycache__" not in p.parts and p.suffix not in (".pyc", ".pyo")}
+    # pathlib's recursive glob may suppress a directory permission error.
+    # An unreadable installation must never be mistaken for an empty one.
+    result = {}
+    def scan(folder):
+        with os.scandir(folder) as entries:
+            for entry in sorted(entries, key=lambda item: item.name):
+                path = Path(entry.path)
+                if entry.name == '__pycache__':
+                    continue
+                if entry.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+                    raise ValueError(f'Refusing redirected add-on content: {path}')
+                if entry.is_dir(follow_symlinks=False):
+                    scan(path)
+                elif entry.is_file(follow_symlinks=False) and path.suffix not in ('.pyc', '.pyo'):
+                    result[path.relative_to(root).as_posix()] = digest(path.read_bytes())
+    scan(root)
+    return result
 
 
 def sync(zip_path, blender_root, versions, apply=False):

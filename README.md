@@ -18,6 +18,7 @@ with a New Century model-conversion workflow and cinematic preview tools.
 | Native camera rig | `cam_*.geom` + neighboring `.anim` | Motion channels, FOV and clip planes; unknown data retained |
 | Cinematic preview JSON | Source actor, sampled camera/FOV and sound cues | Blender scene; no native TS effect package |
 | Captured NC skill library | Select cast, approach, return or cinematic beside the source model | Independent Blender scenes with source animation/audio and optional captured camera |
+| NC native skill recipes | Captured phase, explicit actor/socket/cue mappings and pinned converted components | Isolated native review assets and template-backed BSON; incomplete skills remain non-installable |
 | Native `.sprk` effect graph | Verified common ranges, timing and transform keys | Scoped native edits preserving unknown bytes; translation guides only |
 | Native effect `.bson` | Duration, hits, cue timing/cleanup and drawable references | Validated existing-field edits; 30 Hz timeline markers |
 | Native collision `.phys` | Rigid bodies, boxes, spheres and triangle meshes | Existing body/shape/vertex/triangle/association edits; runtime validation pending |
@@ -43,7 +44,7 @@ Python; the included build supports **CPython 3.13**. See
 
 New Century imports have their own **File → Import → Digimon New Century**
 submenu, immediately above **Digimon Next Order** when that add-on is enabled.
-It contains Model, Skill Phases and Cinematic Preview; native geometry,
+It contains Model, Skill Phases, Native Skill Recipe and Cinematic Preview; native geometry,
 animation and effect imports stay under **Digimon Time Stranger**.
 Cyber Sleuth PC imports use **Digimon Cyber Sleuth**. Its different native
 format is kept separate from Time Stranger export.
@@ -51,6 +52,16 @@ format is kept separate from Time Stranger export.
 Disable older DSTS Unified/Nymic/Romsstar add-ons that register the same menus.
 
 ## Workflow
+
+### Build a native skill review candidate
+
+Choose **Native Skill Recipe** from the New Century import menu, then use
+**New Century Native Skill** in the DSTS sidebar. Map the native actor, motion,
+caster/target sockets, donors and audio cues; add reviewed component manifests,
+inspect the requirements and build into a new isolated folder. The recipe and
+review persist in the `.blend`. See [the recipe workflow and API](docs/skill-conversion.md).
+This produces native review assets; complete effect coverage, target routing,
+actor lifecycle and in-game acceptance remain required before installation.
 
 ### Edit a Time Stranger model
 

@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 4, 5),
+    "version": (1, 4, 6),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -2938,6 +2938,7 @@ class DSTS_MT_NewCenturyImport(bpy.types.Menu):
         layout = self.layout
         layout.operator(DSTS_OT_NcGlbImport.bl_idname, text="Model (.glb)")
         layout.operator('import_scene.dsts_nc_skill', text="Skill Phases (.glb)")
+        layout.operator('import_scene.dsts_native_skill_recipe', text="Native Skill Recipe (.glb)")
         layout.operator(DSTS_OT_CinematicImport.bl_idname, text="Cinematic Preview (.json)")
 
 
@@ -3031,9 +3032,10 @@ CLASSES = (
 
 
 def register():
-    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth, texture_animation
+    from .src import native_effects, nc_skill_ui, nc_native_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth, texture_animation
     native_effects.register()
     nc_skill_ui.register()
+    nc_native_skill_ui.register()
     native_timeline.register()
     native_collision.register()
     for cls in native_lights.CLASSES:
@@ -3115,7 +3117,7 @@ def unregister():
         bpy.utils.unregister_class(cls)
     from .data import material_nodes
     material_nodes.unregister()
-    from .src import native_effects, nc_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth
+    from .src import native_effects, nc_skill_ui, nc_native_skill_ui, native_timeline, native_collision, native_lights, native_scene, cyber_sleuth
     for cls in reversed(cyber_sleuth.CLASSES):
         bpy.utils.unregister_class(cls)
     for cls in reversed(native_scene.CLASSES):
@@ -3125,6 +3127,7 @@ def unregister():
         bpy.utils.unregister_class(cls)
     native_collision.unregister()
     native_timeline.unregister()
+    nc_native_skill_ui.unregister()
     nc_skill_ui.unregister()
     native_effects.unregister()
 
