@@ -58,6 +58,10 @@ sidebar tools. Export the geometry and choose **NC Moveset** for TS clip names.
 The donor provides the game's shader/layout contract. It does not make Unity
 materials or effects automatically equivalent to Time Stranger's renderer.
 Mod IDs, MBE entries and sound-bank installation remain separate tasks.
+Split donor materials retain independent native data: all 14 shader slots,
+numeric uniforms, render settings and material flags. Give split materials
+distinct names before export. Splitting an animated material requires explicit
+float-channel remapping and is currently rejected.
 
 ### Edit animations
 
@@ -99,6 +103,9 @@ inverse bind matrices instead of guessing a model rotation.
 
 - **Senator John, Nymic_Razor and Zeak** — DSTS tools and the earlier unified
   importer, parser integration and workflows this project builds on.
+- **Named-Blade / Nymic_Razor** — original
+  [DSTS Formats Parser](https://github.com/Named-Blade/dsts-formats/tree/parser),
+  the upstream source for the maintained geometry backend.
 - **Pherakki** — animation serialization, DSCS tooling, and the bundled
   `blunger`/`exbip` foundations; see
   [Blender Tools for DSCS](https://github.com/Pherakki/Blender-Tools-for-DSCS).

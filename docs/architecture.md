@@ -62,6 +62,24 @@ data ownership and testable conversion functions.
   their ANIM curves. Material hash targets follow renamed materials; missing
   targets fail explicitly. Metadata lookup uses the native data node type, so
   renaming a material or its node group cannot disconnect its export settings.
+- Splitting an NC donor material previously copied only the outer Blender
+  material; its nested native data group remained shared. Retargeting one atlas
+  could therefore change another. Splits now own independent native groups,
+  including the 14 pass descriptors, vertex layout, numeric uniforms and render
+  settings. Retargeting also isolates native groups shared by ordinary Blender
+  material copies. Labels are presentation only when a numeric parameter ID is
+  present. Material header and parameter trailer words survive saved scenes;
+  uint32 values use decimal strings in Blender properties. Older saved scenes
+  without trailer properties retain the backend's existing defaults.
+- Native-name collisions after removing Blender suffixes and ambiguous animation
+  targets after splitting an animated material now fail explicitly. This avoids
+  silently assigning every affected mesh or float channel to the last material.
+  Broadcasting/remapping animated material channels is not implemented.
+- The bundled Formats backend validates static texture bindings against native
+  parameter type and scope, rejecting matrices, scalars and global-only inputs.
+  Numeric payload counts and opaque metadata remain preserved; no shader-pass
+  meaning is inferred from a slot number. These checks establish data retention,
+  not correct in-game rendering for an arbitrary donor/shader combination.
 - Generated base `.anim` files explicitly keyed identity transforms, erasing
   native bone offsets before motion blending. They now use sparse one-frame
   clips matching the genuine chr050/chr395 base files. Native `0x140364070`
@@ -138,6 +156,7 @@ format or inject a sound bank into the game.
 ```powershell
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_smoke.py
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_smoke.py -- --nc-export
+blender --background --factory-startup --python-exit-code 1 --python tools/blender_material_contract.py
 python tools/package_addon.py
 ```
 
@@ -152,6 +171,15 @@ bytes, and loads the real Leviamon X cinematic manifest.
 geometry/animation export. Mixed-rate multi-part sequence timing is covered by
 the synthetic fixture even when the chosen NC actor has no three-part skill.
 Game assets remain local.
+
+The material-contract check uses the local native body donor (or chr050), splits
+its Blender material, edits one atlas/numeric value and verifies the other copy
+is unchanged. It compares every pass, uniform, setting and exposed metadata word
+through `.blend` save/reload and GEOM serialization, and rejects a truncated pass
+table or matrix-as-texture binding. The updated backend and full smoke suite
+passed Blender 5.1.2 and 5.3.0; the full NC export also passed 5.1.2. The backend
+is built from Formats commit `7045d25`, CPython 3.13 Windows x64, not renamed
+from another ABI.
 
 The smoke tests establish serializer and Blender behavior. In-game rendering,
 particle parity and optical-camera equivalence need separate game validation.

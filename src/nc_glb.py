@@ -1689,8 +1689,8 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
             material_use_counts[material_key] = material_use_count + 1
             if material_use_count:
                 info = dict(info)
-                material_obj = material_obj.copy()
-                material_obj.name = f"{material_key}_{preferred_atlas}"
+                from .material import copy_native_material
+                material_obj = copy_native_material(material_obj, f"{material_key}_{preferred_atlas}")
                 info["material"] = material_obj
             material_obj["DSTS_nc_atlas"] = preferred_atlas
 

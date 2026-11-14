@@ -311,10 +311,13 @@ def export_geom(collection):
     for mat in materials:
         mat_data = material.export_material(mat)
         mat_data.name = re.sub(r"(\.[0-9]{3})?$", "", mat_data.name)
+        if mat_data.name in name_to_mat:
+            raise ValueError(f"Materials resolve to the same native name '{mat_data.name}'; rename split materials before export")
         geom.materials.append(mat_data)
         name_to_mat[mat_data.name] = mat_data
         if 'DSTS_source_name_hash' in mat:
-            material_hash_map[int(mat['DSTS_source_name_hash'])] = zlib.crc32(mat_data.name.encode('utf-8')) ^ 0xFFFFFFFF
+            material_hash_map.setdefault(int(mat['DSTS_source_name_hash']), set()).add(
+                zlib.crc32(mat_data.name.encode('utf-8')) ^ 0xFFFFFFFF)
 
     for obj in [o for o in collection.objects if o.type == "MESH"]:
         mesh_out = mesh.export_mesh_object(obj, geom.skeleton)
@@ -326,7 +329,10 @@ def export_geom(collection):
         if channel.flags == 8:
             if channel.name_hash not in material_hash_map:
                 raise ValueError('A native material animation target was removed; preserve its material before export')
-            channel.name_hash = material_hash_map[channel.name_hash]
+            targets = material_hash_map[channel.name_hash]
+            if len(targets) != 1:
+                raise ValueError('A native animated material was split into multiple targets; explicit float-channel remapping is required')
+            channel.name_hash = next(iter(targets))
 
     for obj in [*geom.skeleton.bones] + [*geom.materials] + [*geom.meshes]:
         obj.name = re.sub(r"(\.[0-9]{3})?$", "", obj.name)
@@ -335,7 +341,7 @@ def export_geom(collection):
 
 
 def export_textures(collection, output_dir, as_png=False):
-    from .material import texture_stem
+    from .material import find_data_group, texture_stem
 
     images_dir = os.path.join(output_dir, "images")
     os.makedirs(images_dir, exist_ok=True)
@@ -351,28 +357,28 @@ def export_textures(collection, output_dir, as_png=False):
         for mat in obj.data.materials:
             if not mat or not mat.use_nodes:
                 continue
-            for node in mat.node_tree.nodes:
-                if node.type == "GROUP" and node.node_tree and node.node_tree.name.startswith("DSTS_Data-"):
-                    for g_node in node.node_tree.nodes:
-                        if isinstance(g_node, bpy.types.ShaderNodeTexImage) and g_node.image:
-                            img = g_node.image
-                            if img.name in processed_images:
-                                continue
-                            processed_images.add(img.name)
-                            try:
-                                tex_name = texture_stem(img)
-                                if tex_name in stems and stems[tex_name] != img:
-                                    raise ValueError(f'Different images resolve to {tex_name!r}; give them distinct texture names')
-                                stems[tex_name] = img
-                                if as_png:
-                                    output_path = os.path.join(images_dir, tex_name + ".png")
-                                    export_image_as_png(img, output_path)
-                                else:
-                                    output_path = os.path.join(images_dir, tex_name + ".img")
-                                    export_image_as_dds(img, output_path)
-                                exported.append(tex_name)
-                            except Exception as e:
-                                failures.append(f'{img.name}: {e}')
+            node = find_data_group(mat)
+            if node is not None:
+                for g_node in node.node_tree.nodes:
+                    if isinstance(g_node, bpy.types.ShaderNodeTexImage) and g_node.image:
+                        img = g_node.image
+                        if img.name in processed_images:
+                            continue
+                        processed_images.add(img.name)
+                        try:
+                            tex_name = texture_stem(img)
+                            if tex_name in stems and stems[tex_name] != img:
+                                raise ValueError(f'Different images resolve to {tex_name!r}; give them distinct texture names')
+                            stems[tex_name] = img
+                            if as_png:
+                                output_path = os.path.join(images_dir, tex_name + ".png")
+                                export_image_as_png(img, output_path)
+                            else:
+                                output_path = os.path.join(images_dir, tex_name + ".img")
+                                export_image_as_dds(img, output_path)
+                            exported.append(tex_name)
+                        except Exception as e:
+                            failures.append(f'{img.name}: {e}')
 
     if failures:
         raise RuntimeError('Texture export incomplete:\n' + '\n'.join(failures))

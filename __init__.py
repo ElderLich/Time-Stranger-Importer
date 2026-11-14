@@ -2450,7 +2450,11 @@ class DSTS_OT_RetargetMaterialTextures(Operator):
         changed = 0
         missing = set()
         fallback_used = set()
+        from .src.material import find_data_group, make_data_group_single_user
         for mat in materials:
+            if find_data_group(mat) is None:
+                continue
+            make_data_group_single_user(mat)
             preferred_atlas = _normalize_body_atlas(
                 preferred_atlas_by_material.get(mat, "") or mat.get("DSTS_nc_atlas", "")
             )

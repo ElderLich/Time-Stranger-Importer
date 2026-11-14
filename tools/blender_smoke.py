@@ -358,6 +358,24 @@ if float_path.exists():
     output = export_geom(animated_material)
     binding = output.skeleton.float_channels[0]
     assert binding.name_hash == (zlib.crc32(model.data.materials[0].name.encode()) ^ 0xFFFFFFFF)
+    from Time_Stranger_Importer.src.material import copy_native_material
+    duplicate_model = model.copy()
+    duplicate_model.data = model.data.copy()
+    duplicate_material = copy_native_material(model.data.materials[0], 'Split animated material')
+    duplicate_model.data.materials[0] = duplicate_material
+    animated_material.objects.link(duplicate_model)
+    try:
+        export_geom(animated_material)
+        raise AssertionError('Split material animation must not silently target the last material')
+    except ValueError as error:
+        assert 'float-channel remapping' in str(error)
+    duplicate_material.name = model.data.materials[0].name + '.001'
+    try:
+        export_geom(animated_material)
+        raise AssertionError('Native material name collision must not silently rebind meshes')
+    except ValueError as error:
+        assert 'same native name' in str(error)
+    bpy.data.objects.remove(duplicate_model, do_unlink=True)
     with tempfile.TemporaryDirectory(prefix='dsts_material_animation_') as folder:
         destination = Path(folder) / 'animated.geom'
         output.to_file(str(destination))
@@ -472,6 +490,12 @@ if '--nc-export' in sys.argv:
     bpy.context.window.scene = scene
     collection, rig, notes = import_nc_model(bpy.context, str(glb), str(native_path))
     assert unused.name in bpy.data.meshes
+    from Time_Stranger_Importer.src.material import find_data_group
+    body_materials = {o.data.materials[0] for o in collection.objects
+                      if o.type == 'MESH' and o.get('DSTS_nc_atlas')}
+    assert len(body_materials) >= 2
+    native_groups = [find_data_group(m).node_tree for m in body_materials]
+    assert len(set(native_groups)) == len(native_groups), 'Body atlas materials must own independent native groups'
     geometry = export_geom(collection)
     track = next(t for t in rig.animation_data.nla_tracks if t.name == 'skill2_display')
     assert abs(track.strips[0].action_frame_end - track.strips[0].action_frame_start - 260) < .01

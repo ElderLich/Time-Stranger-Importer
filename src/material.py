@@ -15,6 +15,28 @@ from .. import data
 # shader label table was shifted; use IDs for preview roles and retain them in
 # Blender nodes so a backend label correction cannot change a material binding.
 _LEGACY_PARAMETER_IDS = json.loads(Path(__file__).with_name('legacy_shader_parameters.json').read_text('utf-8'))
+_MATERIAL_WORDS = ('unknown_0x314', 'unknown_0x318', 'unknown_0x31C',
+                   'unknown_0x324', 'unknown_0x326')
+_PARAMETER_WORDS = ('unknown_0x14', 'unknown_0x18', 'unknown_0x1C')
+
+
+def _store_native_words(owner, native, fields, prefix=''):
+    # ID properties use signed integers; decimal strings retain every uint32 bit.
+    for field in fields:
+        if hasattr(native, field):
+            owner[prefix + field] = str(int(getattr(native, field)))
+
+
+def _restore_native_words(owner, native, fields, prefix='', required=False):
+    for field in fields:
+        key = prefix + field
+        if key not in owner:
+            if required:
+                raise ValueError(f'Missing native material metadata {key}; reimport its donor')
+            continue  # Legacy .blend files did not retain parameter trailer words.
+        if not hasattr(native, field):
+            raise RuntimeError(f'The geometry backend cannot preserve {field}; update the backend')
+        setattr(native, field, int(owner[key]))
 
 def _export_parameter_id(node):
     if 'DSTS_parameter_id' in node:
@@ -34,6 +56,28 @@ def find_data_group(mat):
     if len(groups) > 1:
         raise ValueError(f"Material '{mat.name}' contains multiple native metadata groups")
     return groups[0] if groups else None
+
+
+def make_data_group_single_user(mat):
+    """Isolate editable native data while retaining shared preview helpers/images."""
+    group = find_data_group(mat)
+    if group is None:
+        raise ValueError(f"Material '{mat.name}' has no native metadata")
+    if group.node_tree.users > 1:
+        group.node_tree = group.node_tree.copy()
+    return group
+
+
+def copy_native_material(mat, name):
+    """Split a donor without sharing shader, uniform, setting or layout edits."""
+    # Validate before creating a datablock, so a failed split leaves no orphan.
+    if find_data_group(mat) is None:
+        raise ValueError(f"Material '{mat.name}' has no native metadata")
+    duplicate = mat.copy()
+    duplicate.name = name
+    duplicate.use_fake_user = False
+    make_data_group_single_user(duplicate)
+    return duplicate
 
 def layout_columns(node_groups, column_map, x_step=300, y_step=-220):
     """
@@ -298,6 +342,7 @@ def resolve_material(collection, mat, mat_data, tex_folder):
 
             tex_node = g_nodes.new("ShaderNodeTexImage")
             tex_node["unknown_0xC"] = uniform.unknown_0xC
+            _store_native_words(tex_node, uniform, _PARAMETER_WORDS)
             tex_node['DSTS_parameter_id'] = uniform.parameter_id
             tex_node.image = get_image(tex_path)
             tex_node.label = "DSTS-" + uniform.parameter_name
@@ -355,6 +400,7 @@ def resolve_material(collection, mat, mat_data, tex_folder):
 
             float_node.label = "DSTS-" + uniform.parameter_name
             float_node['DSTS_parameter_id'] = uniform.parameter_id
+            _store_native_words(float_node, uniform, _PARAMETER_WORDS)
             base_width = 30
             char_width = 8
             float_node.width = base_width + len(float_node.label) * char_width
@@ -380,6 +426,7 @@ def resolve_material(collection, mat, mat_data, tex_folder):
             setting_node.width = base_width + len(setting_node.label) * char_width
 
             setting_node["unknown_0x12"] = setting.unknown_0x12
+            _store_native_words(setting_node, setting, _PARAMETER_WORDS)
 
             for value in list(bytes(setting.value)):
                 val = setting_node.values.add()
@@ -451,11 +498,7 @@ def resolve_material(collection, mat, mat_data, tex_folder):
     output = nodes.new("ShaderNodeOutputMaterial")
     output.location = (400, 0)
 
-    mat['DSTS_unknown_0x314'] = mat_data.unknown_0x314
-    mat['DSTS_unknown_0x318'] = mat_data.unknown_0x318
-    mat['DSTS_unknown_0x31C'] = mat_data.unknown_0x31C
-    mat['DSTS_unknown_0x324'] = mat_data.unknown_0x324
-    mat['DSTS_unknown_0x326'] = mat_data.unknown_0x326
+    _store_native_words(mat, mat_data, _MATERIAL_WORDS, prefix='DSTS_')
     # Blender integer ID properties are signed 32-bit; native hashes are uint32.
     mat['DSTS_source_name_hash'] = str(int(mat_data.name_hash))
 
@@ -485,38 +528,43 @@ def export_material(mat):
     if g_node is None:
         raise ValueError(f"Material '{mat.name}' has no native metadata; use Borrow Material Setup before export")
     g_tree = g_node.node_tree
+    shader_nodes = [node for node in g_tree.nodes
+                    if type(node) == data.material_nodes.ShaderDataNode]
+    if len(shader_nodes) != 1 or len(shader_nodes[0].shader_strings) != 14:
+        raise ValueError(f"Material '{mat.name}' must retain one native table with all 14 shader slots")
 
     for node in g_tree.nodes:
         if type(node) == data.material_nodes.ShaderDataNode:
             for i in range(14):
                 mat_out.shaders[i].name = node.shader_strings[i].value
-        elif type(node) == bpy.types.ShaderNodeTexImage and node.label.startswith("DSTS-"):
+        elif type(node) == bpy.types.ShaderNodeTexImage and ('DSTS_parameter_id' in node or node.label.startswith("DSTS-")):
             uniform = dsts_formats.ShaderUniform()
             uniform.parameter_id = _export_parameter_id(node)
             uniform.value = texture_stem(node.image)
             uniform.unknown_0xC = node['unknown_0xC']
+            _restore_native_words(node, uniform, _PARAMETER_WORDS)
+            if hasattr(dsts_formats, 'validate_material_texture_binding'):
+                dsts_formats.validate_material_texture_binding(uniform.parameter_id)
 
             mat_out.uniforms.append(uniform)
-        elif type(node) == data.material_nodes.ShaderFloatUniform and node.label.startswith("DSTS-"):
+        elif type(node) == data.material_nodes.ShaderFloatUniform:
             uniform = dsts_formats.ShaderUniform()
             uniform.parameter_id = _export_parameter_id(node)
             uniform.value = [v.value for v in node.values]
+            _restore_native_words(node, uniform, _PARAMETER_WORDS)
 
             mat_out.uniforms.append(uniform)
-        elif type(node) == data.material_nodes.ShaderSetting and node.label.startswith("DSTS-"):
+        elif type(node) == data.material_nodes.ShaderSetting:
             setting = dsts_formats.ShaderSetting()
             setting.parameter_id = _export_parameter_id(node)
             setting.value = bytes([v.value for v in node.values])
             setting.unknown_0x12 = node["unknown_0x12"]
+            _restore_native_words(node, setting, _PARAMETER_WORDS)
 
             mat_out.settings.append(setting)
 
     mat_out.name = mat.name
 
-    mat_out.unknown_0x314 = mat['DSTS_unknown_0x314']
-    mat_out.unknown_0x318 = mat['DSTS_unknown_0x318']
-    mat_out.unknown_0x31C = mat['DSTS_unknown_0x31C']
-    mat_out.unknown_0x324 = mat['DSTS_unknown_0x324']
-    mat_out.unknown_0x326 = mat['DSTS_unknown_0x326']
+    _restore_native_words(mat, mat_out, _MATERIAL_WORDS, prefix='DSTS_', required=True)
 
     return mat_out
