@@ -6,6 +6,8 @@ __pycache__/
 
 dist/
 build/
+# Local captures, extracted shaders and generated verification artifacts.
+local/
 *.blend1
 *.tmp.glb
 
