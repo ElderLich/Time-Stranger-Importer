@@ -398,6 +398,7 @@ def import_model(context, filepath, import_animations=True, import_cameras=False
 class DSCS_OT_import_model(bpy.types.Operator, ImportHelper):
     bl_idname = 'import_scene.cyber_sleuth_model'
     bl_label = 'Cyber Sleuth PC model / scene'
+    bl_description = 'Import a Cyber Sleuth PC model or scene with its native companion files, textures and optional matching motions and camera rigs'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.geom'
     filter_glob: StringProperty(default='*.geom;*.name;*.skel', options={'HIDDEN'})
@@ -427,6 +428,7 @@ class DSCS_OT_import_model(bpy.types.Operator, ImportHelper):
 class DSCS_OT_export_unsupported(bpy.types.Operator):
     bl_idname = 'export_scene.cyber_sleuth_unsupported'
     bl_label = 'Cyber Sleuth export (not implemented)'
+    bl_description = 'Explain the current native Cyber Sleuth export limitation; this operation does not write a game asset'
 
     def execute(self, context):
         self.report({'ERROR'}, 'Cyber Sleuth native export is not implemented. Save a .blend for editing.')
@@ -460,6 +462,7 @@ def activate_clip(rig, index, scene):
 class DSCS_OT_preview_clip(bpy.types.Operator):
     bl_idname = 'dscs.preview_clip'
     bl_label = 'Preview Cyber Sleuth clip'
+    bl_description = 'Activate an imported Cyber Sleuth animation clip on its owning rig and set the timeline preview range'
     bl_options = {'REGISTER', 'UNDO'}
     index: IntProperty()
 
@@ -479,6 +482,7 @@ class DSCS_OT_preview_clip(bpy.types.Operator):
 class DSCS_OT_use_camera(bpy.types.Operator):
     bl_idname = 'dscs.use_camera'
     bl_label = 'Use Cyber Sleuth camera preview'
+    bl_description = 'Use this imported Cyber Sleuth camera for the scene and activate its first captured motion'
     bl_options = {'REGISTER', 'UNDO'}
     object_name: StringProperty()
 

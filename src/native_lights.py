@@ -239,6 +239,7 @@ def export_lights(collection, filepath, *, overwrite=False):
 class DSTS_OT_NativeLightsImport(Operator, ImportHelper):
     bl_idname = 'import_scene.dsts_native_lights'
     bl_label = 'Native Light Records (.geom)'
+    bl_description = 'Import native light records and verified optical controls; supported point lights use an approximate Blender preview'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.geom'
     filter_glob: StringProperty(default='*.geom', options={'HIDDEN'})
@@ -256,6 +257,7 @@ class DSTS_OT_NativeLightsImport(Operator, ImportHelper):
 class DSTS_OT_NativeLightsExport(Operator, ExportHelper):
     bl_idname = 'export_scene.dsts_native_lights'
     bl_label = 'Export Native Light Edits'
+    bl_description = 'Export verified light-field edits while preserving the other GEOM bytes; model-owned lights export with their model'
     filename_ext = '.geom'
     filter_glob: StringProperty(default='*.geom', options={'HIDDEN'})
     overwrite: BoolProperty(name='Replace Existing File', default=False)

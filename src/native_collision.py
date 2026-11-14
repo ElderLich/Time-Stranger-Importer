@@ -234,6 +234,7 @@ def export_collision(collection, filepath, *, overwrite=False):
 class DSTS_OT_CollisionImport(Operator, ImportHelper):
     bl_idname = 'import_scene.dsts_collision'
     bl_label = 'Native Object Collisions (.phys)'
+    bl_description = 'Import native PHYS collision bodies, boxes, spheres and triangle meshes for geometric inspection and editing'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.phys'
     filter_glob: StringProperty(default='*.phys', options={'HIDDEN'})
@@ -256,6 +257,7 @@ class DSTS_OT_CollisionImport(Operator, ImportHelper):
 class DSTS_OT_CollisionExport(Operator, ExportHelper):
     bl_idname = 'export_scene.dsts_collision'
     bl_label = 'Export Native Object Collisions'
+    bl_description = 'Validate and export existing collision body, shape and mesh edits while preserving unknown native data'
     filename_ext = '.phys'
     filter_glob: StringProperty(default='*.phys', options={'HIDDEN'})
     overwrite: BoolProperty(name='Replace Existing File', default=False)
@@ -276,6 +278,7 @@ class DSTS_OT_CollisionExport(Operator, ExportHelper):
 class DSTS_OT_CollisionRefresh(Operator):
     bl_idname = 'dsts.collision_refresh'
     bl_label = 'Refresh Primitive Preview'
+    bl_description = 'Rebuild the selected box or sphere preview from its native half-extents or radius'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -290,6 +293,7 @@ class DSTS_OT_CollisionRefresh(Operator):
 class DSTS_OT_CollisionAssociations(Operator):
     bl_idname = 'dsts.collision_associations'
     bl_label = 'Set Selected Face Associations'
+    bl_description = 'Assign existing native association-table A and B entries to the selected collision mesh faces'
     bl_options = {'REGISTER', 'UNDO'}
     table_a_index: IntProperty(name='Native association A', min=0)
     table_b_index: IntProperty(name='Native association B', min=0)

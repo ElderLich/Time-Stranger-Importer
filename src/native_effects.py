@@ -208,6 +208,7 @@ class DSTS_OT_SparkImport(Operator, ImportHelper):
     """Import a native effect graph and edit verified common fields"""
     bl_idname = 'import_scene.dsts_spark'
     bl_label = 'Native Effect Graph (.sprk)'
+    bl_description = 'Import a native SPRK graph with editable verified transforms, timing and keys; viewport guides do not render particles'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.sprk'
     filter_glob: StringProperty(default='*.sprk', options={'HIDDEN'})
@@ -231,6 +232,7 @@ class DSTS_OT_SparkExport(Operator, ExportHelper):
     """Export verified common-field edits while preserving unknown bytes"""
     bl_idname = 'export_scene.dsts_spark'
     bl_label = 'Export Native Effect Graph'
+    bl_description = 'Validate and export verified SPRK field edits while preserving unsupported graph data'
     filename_ext = '.sprk'
     filter_glob: StringProperty(default='*.sprk', options={'HIDDEN'})
     collection_name: StringProperty(options={'HIDDEN'})

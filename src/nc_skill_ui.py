@@ -112,6 +112,7 @@ class DSTS_OT_NcSkillImport(Operator, ImportHelper):
     """Import a captured skill cast, approach, return or cinematic from the model library"""
     bl_idname = 'import_scene.dsts_nc_skill'
     bl_label = 'New Century Skill Phases'
+    bl_description = 'Choose a captured cast, approach, return or cinematic phase and import its source motion, available camera, audio and effect references'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.glb'
     filter_glob: StringProperty(default='*.glb', options={'HIDDEN'})

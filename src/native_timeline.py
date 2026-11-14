@@ -216,6 +216,7 @@ def export_timeline(obj, filepath, *, overwrite=False):
 class DSTS_OT_EffectTimelineImport(Operator, ImportHelper):
     bl_idname = 'import_scene.dsts_effect_timeline'
     bl_label = 'Native Effect Timeline (.bson)'
+    bl_description = 'Import native effect duration, hit and sound timing into an editable 30 fps timeline; particle and audio playback remain unsupported'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.bson'
     filter_glob: StringProperty(default='*.bson', options={'HIDDEN'})
@@ -233,6 +234,7 @@ class DSTS_OT_EffectTimelineImport(Operator, ImportHelper):
 class DSTS_OT_EffectTimelineExport(Operator, ExportHelper):
     bl_idname = 'export_scene.dsts_effect_timeline'
     bl_label = 'Export Native Effect Timeline'
+    bl_description = 'Validate and export edited native effect fields while preserving the remaining BSON data'
     filename_ext = '.bson'
     filter_glob: StringProperty(default='*.bson', options={'HIDDEN'})
     overwrite: BoolProperty(name='Replace Existing File', default=False)
@@ -253,6 +255,7 @@ class DSTS_OT_EffectTimelineExport(Operator, ExportHelper):
 class DSTS_OT_EffectTimelineRefresh(Operator):
     bl_idname = 'dsts.effect_timeline_refresh'
     bl_label = 'Refresh Timeline'
+    bl_description = 'Rebuild timeline markers from the native field values, discarding unapplied marker moves'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -267,6 +270,7 @@ class DSTS_OT_EffectTimelineRefresh(Operator):
 class DSTS_OT_EffectTimelineApply(Operator):
     bl_idname = 'dsts.effect_timeline_apply'
     bl_label = 'Apply Marker Timing'
+    bl_description = 'Validate moved timeline markers and apply their times to the corresponding native effect fields'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -281,6 +285,7 @@ class DSTS_OT_EffectTimelineApply(Operator):
 class DSTS_OT_EffectDrawableSelect(Operator, ImportHelper):
     bl_idname = 'dsts.effect_drawable_select'
     bl_label = 'Select Drawable Geometry'
+    bl_description = 'Validate a GEOM and its matching NLST, then use its native resource name for the selected effect drawable'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.geom'
     filter_glob: StringProperty(default='*.geom', options={'HIDDEN'})

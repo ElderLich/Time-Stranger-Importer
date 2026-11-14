@@ -297,6 +297,7 @@ def restore_scene_records(collection, armature, geom):
 class DSTS_OT_UseNativeCamera(Operator):
     bl_idname = 'dsts.use_native_camera'
     bl_label = 'Use Native Preview Camera'
+    bl_description = 'Set the selected imported native perspective camera as this scene\'s active preview camera'
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
