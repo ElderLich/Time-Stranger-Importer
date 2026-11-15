@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 5, 4),
+    "version": (1, 5, 5),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -2374,15 +2374,15 @@ class DSTS_OT_BorrowMaterialSetup(Operator):
             self.report({'ERROR'}, "Donor .geom has no materials")
             return {'CANCELLED'}
 
-        layouts_copied = 0
+        layouts_copied = set()
         for index, donor_mesh in enumerate(donor_geom.meshes):
             mat = None
             if donor_mesh.material:
                 mat = borrowed_by_name.get(donor_mesh.material.name)
             if mat is None:
                 mat = borrowed_list[min(index, len(borrowed_list) - 1)]
-            if _set_material_vertex_layout_from_mesh(mat, donor_mesh):
-                layouts_copied += 1
+            if mat not in layouts_copied and _set_material_vertex_layout_from_mesh(mat, donor_mesh):
+                layouts_copied.add(mat)
 
         applied = 0
         flags_copied = 0
@@ -2394,7 +2394,8 @@ class DSTS_OT_BorrowMaterialSetup(Operator):
             if mat is None:
                 mat = borrowed_list[min(index, len(borrowed_list) - 1)]
             if donor_mesh:
-                _set_material_vertex_layout_from_mesh(mat, donor_mesh)
+                from .src.mesh import preserve_draw_layout
+                preserve_draw_layout(obj.data, mat, donor_mesh)
                 # Also take the donor mesh's flag byte (isRendered/isWireframe/...)
                 # so a custom mesh exports the donor's flags instead of the
                 # hardcoded True,FalseÃ—7 defaults â€” this is the "get the flags of
@@ -2415,7 +2416,7 @@ class DSTS_OT_BorrowMaterialSetup(Operator):
         except Exception:
             pass
 
-        self.report({'INFO'}, f"Borrowed {len(borrowed_list)} material(s) from {os.path.basename(donor_path)}; copied {layouts_copied} layout(s); copied flags to {flags_copied} mesh(es); applied to {applied} mesh(es)")
+        self.report({'INFO'}, f"Borrowed {len(borrowed_list)} material(s) from {os.path.basename(donor_path)}; copied {len(layouts_copied)} material layout(s); copied flags to {flags_copied} mesh(es); applied to {applied} mesh(es)")
         return {'FINISHED'}
 
 

@@ -83,6 +83,22 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
     
     mesh_data.update(calc_edges=True)
 
+    # A native tangent can also be authored without UV1. Blender cannot
+    # reconstruct that frame from UVs, so retain its direction and handedness.
+    if "tangent" in attr_map and "uv1" not in attr_map:
+        authored = extract_attribute(packed, stride, num_verts, attr_map["tangent"])
+        xyz = authored[:, :3].astype(np.float32)
+        if isinstance(coord_transform, Matrix):
+            xyz = xyz @ np.array(coord_transform, dtype=np.float32)[:3, :3].T
+        elif coord_transform:
+            origin = coord_transform(Vector((0, 0, 0)))
+            xyz = np.array([coord_transform(Vector(row)) - origin for row in xyz], dtype=np.float32)
+        direction = mesh_data.attributes.new("DSTS_tangent_xyz", "FLOAT_VECTOR", "POINT")
+        direction.data.foreach_set("vector", xyz.ravel())
+        if authored.shape[1] == 4:
+            sign = mesh_data.attributes.new("DSTS_tangent_sign", "FLOAT", "POINT")
+            sign.data.foreach_set("value", authored[:, 3].astype(np.float32))
+
     # --- UVs ---
     if faces.size > 0:
         loop_v_idxs = np.zeros(len(mesh_data.loops), dtype=np.int32)
@@ -164,7 +180,7 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
         mesh_data.validate(clean_customdata=False)
         
         # 4. Optional: If you rely on Normal Maps, calculate tangents now
-        if mesh_data.uv_layers:
+        if "tangent" in attr_map and mesh_data.uv_layers:
             mesh_data.calc_tangents(uvmap=mesh_data.uv_layers[0].name)
     
     # --- OBJECT ---
@@ -253,6 +269,71 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
 
     return obj
 
+def vertex_layout(stride, attributes):
+    return [int(stride), [[at.atype, at.dtype, at.count, at.offset] for at in attributes]]
+
+
+def material_vertex_layout(mat):
+    if not mat.node_tree:
+        raise ValueError(
+            f"Material '{mat.name}' has no node tree. "
+            "Use Borrow Material Setup before exporting."
+        )
+    from .material import find_data_group
+    g_node = find_data_group(mat)
+    if g_node is None:
+        raise ValueError(
+            f"Material '{mat.name}' has no DSTS_Data node group. "
+            "Use Borrow Material Setup before exporting."
+        )
+    data_node = next(
+        (n for n in g_node.node_tree.nodes if type(n) == data.material_nodes.ShaderDataNode),
+        None,
+    )
+    if data_node is None or data_node.bytes_per_vertex <= 0 or len(data_node.attributes) == 0:
+        raise ValueError(
+            f"Material '{mat.name}' has no DSTS vertex buffer layout. "
+            "Use Borrow Material Setup again before exporting."
+        )
+    return vertex_layout(data_node.bytes_per_vertex, data_node.attributes)
+
+
+def set_vertex_layout_override(mesh, material, override):
+    # A GEOM layout belongs to a draw. The material node carries its default,
+    # while draws sharing the material may have a different declaration.
+    for key in ('DSTS_vertex_layout_override', 'DSTS_vertex_layout_material'):
+        if key in mesh:
+            del mesh[key]
+    if override:
+        mesh['DSTS_vertex_layout_override'] = override
+        mesh['DSTS_vertex_layout_material'] = material
+
+
+def preserve_draw_layout(mesh, material, native_mesh):
+    source = vertex_layout(native_mesh.bytes_per_vertex, native_mesh.mesh_attributes)
+    override = json.dumps(source) if source != material_vertex_layout(material) else None
+    set_vertex_layout_override(mesh, material, override)
+
+
+def export_vertex_layout(mesh):
+    if not mesh.materials or mesh.materials[0] is None:
+        raise ValueError(
+            f"Mesh '{mesh.name}' has no material assigned. "
+            "Use Borrow Material Setup to give it a donor material before exporting."
+        )
+    material = mesh.materials[0]
+    layout = material_vertex_layout(material)
+    if mesh.get('DSTS_vertex_layout_material') == material:
+        layout = json.loads(mesh['DSTS_vertex_layout_override'])
+    stride, declaration = layout
+    attrs = []
+    for atype, dtype, count, offset in declaration:
+        attr = dsts_formats.MeshAttribute()
+        attr.atype, attr.dtype, attr.count, attr.offset = atype, dtype, count, offset
+        attrs.append(attr)
+    return stride, attrs
+
+
 def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotation(math.radians(-90), 4, 'X'),
                        *, split_palettes=False):
     mesh = mesh_obj.data
@@ -274,12 +355,23 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
         attribute = mesh.color_attributes["Color"]
         raw_colors = np.array([item.color[:] for item in attribute.data], dtype=np.float32)
         colors = raw_colors[loop_vertex] if attribute.domain == 'POINT' else raw_colors
+    stride, attrs = export_vertex_layout(mesh)
     tangents = None
-    if 1 in uv_arrays:
+    tangent_attr = next((at for at in attrs if at.atype == 'tangent'), None)
+    if tangent_attr is not None and 1 in uv_arrays:
         if any(len(p.vertices) > 4 for p in mesh.polygons):
             raise ValueError(f"Mesh '{mesh.name}' has n-gons; triangulate them before export")
         mesh.calc_tangents(uvmap="uv1")
         tangents = np.array([(*loop.tangent, loop.bitangent_sign) for loop in mesh.loops], dtype=np.float32)
+    elif tangent_attr is not None:
+        direction = mesh.attributes.get("DSTS_tangent_xyz")
+        sign = mesh.attributes.get("DSTS_tangent_sign")
+        if direction is None or (tangent_attr.count == 4 and sign is None):
+            raise ValueError(f"Mesh '{mesh.name}' needs uv1 or imported tangent data for its declared tangent")
+        tangents = np.array([v.vector[:] for v in direction.data], dtype=np.float32)
+        if tangent_attr.count == 4:
+            tangents = np.column_stack((tangents, [v.value for v in sign.data]))
+        tangents = tangents[loop_vertex]
 
     # GEOM has a single vertex index for every attribute. Blender has separate
     # corner normals/UVs/colors: split vertices only where those corners differ.
@@ -319,7 +411,7 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
     if tangents is not None:
         selected = tangents[representatives]
         selected[:, :3] = transform_directions(selected[:, :3])
-        mesh_out.set_tangent(selected.astype(np.float16))
+        mesh_out.set_tangent(selected[:, :tangent_attr.count].astype(get_np_dtype(tangent_attr.dtype)))
 
     vert_indices = None
     if skeleton is not None:
@@ -349,45 +441,8 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
                 vert_weights[vi, gi] = weight / total
         mesh_out.set_weight(vert_weights.astype(np.float16))
 
-    # -- ATTRIBUTES --
-    if not mesh.materials or mesh.materials[0] is None:
-        raise ValueError(
-            f"Mesh '{mesh.name}' has no material assigned. "
-            "Use Borrow Material Setup to give it a donor material before exporting."
-        )
-    mat = mesh.materials[0]
-    if not mat.node_tree:
-        raise ValueError(
-            f"Material '{mat.name}' has no node tree. "
-            "Use Borrow Material Setup before exporting."
-        )
-    from .material import find_data_group
-    g_node = find_data_group(mat)
-    if g_node is None:
-        raise ValueError(
-            f"Material '{mat.name}' has no DSTS_Data node group. "
-            "Use Borrow Material Setup before exporting."
-        )
-    data_node = next(
-        (n for n in g_node.node_tree.nodes if type(n) == data.material_nodes.ShaderDataNode),
-        None,
-    )
-    if data_node is None or data_node.bytes_per_vertex <= 0 or len(data_node.attributes) == 0:
-        raise ValueError(
-            f"Material '{mat.name}' has no DSTS vertex buffer layout. "
-            "Use Borrow Material Setup again before exporting."
-        )
-    attrs = []
-    for at in data_node.attributes:
-        attribute = dsts_formats.MeshAttribute()
-        attribute.count = at.count
-        attribute.offset = at.offset
-        attribute.atype = at.atype
-        attribute.dtype = at.dtype
-        attrs.append(attribute)
-
     mesh_out.mesh_attributes = attrs
-    mesh_out.bytes_per_vertex = data_node.bytes_per_vertex
+    mesh_out.bytes_per_vertex = stride
 
     # -- AUTO-UV: fill declared-but-missing uv channels from uv1 --
     # Overlay materials (e.g. chr050_f01/f02) declare a vertex layout with
@@ -398,7 +453,7 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
     # declared-but-missing channel so the overlay samples a valid UV. This is
     # idempotent: channels the mesh already provides are left untouched.
     if uv1_coords is not None:
-        for at in data_node.attributes:
+        for at in attrs:
             atype = str(at.atype)
             if not atype.startswith("uv"):
                 continue

@@ -1210,7 +1210,8 @@ def _import_donor(context, donor_path):
         # donor's contiguous skeleton range; the new palette can be sparse.
         # Indexed gathering preserves every declared bone without that premise.
         flags["DSTS_flag_2"] = False
-        return {"material": material, "flags": flags, "name": obj.name}
+        return {"material": material, "flags": flags, "name": obj.name,
+                "layout_override": obj.data.get("DSTS_vertex_layout_override")}
 
     body_infos = []
     outline_info = None
@@ -1366,6 +1367,8 @@ def _build_outline_mesh(context, body_objects, armature_obj, outline_info, colle
 
     outline.data.materials.clear()
     outline.data.materials.append(outline_info["material"])
+    from .mesh import set_vertex_layout_override
+    set_vertex_layout_override(outline.data, outline_info["material"], outline_info["layout_override"])
     for key, value in outline_info["flags"].items():
         outline.data[key] = value
 
@@ -1748,6 +1751,9 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
 
         obj.data.materials.clear()
         obj.data.materials.append(info["material"])
+        if info["layout_override"]:
+            from .mesh import set_vertex_layout_override
+            set_vertex_layout_override(obj.data, info["material"], info["layout_override"])
         obj["DSTS_nc_atlas"] = preferred_atlas
         obj.data["DSTS_nc_atlas"] = preferred_atlas
         for key, value in info["flags"].items():

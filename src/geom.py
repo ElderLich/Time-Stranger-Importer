@@ -212,7 +212,7 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
             blender_materials[mat_data.name] = mat
 
         for mesh_obj in geom.meshes:
-            mesh.import_mesh_object(
+            obj = mesh.import_mesh_object(
                 mesh_obj,
                 armature_obj,
                 blender_materials,
@@ -231,6 +231,8 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
                 for attr in attr_list:
                     at = data_node.attributes.add()
                     at.count, at.offset, at.atype, at.dtype = attr.values()
+            else:
+                mesh.preserve_draw_layout(obj.data, mat, mesh_obj)
 
         error_list = dsts_formats.get_error_list()
         if error_list:
