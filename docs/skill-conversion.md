@@ -22,7 +22,7 @@ runtime, observer, movement or cleanup controller is required or generated.
 
 This milestone produces actual native component resources and bounded BSON
 event roots. It is not a complete playable skill or an installable mod. It does
-not edit DigiTS Helper or an installed game. Sevenfold's ordinary Cast and
+not edit Time Stranger Mod Studio or an installed game. Sevenfold's ordinary Cast and
 Triple's full attack still require a reviewed native package and game acceptance.
 A skill includes actor motion, particles,
 materials, sockets, audio and tables; it is not one SPRK/BSON conversion.
