@@ -38,9 +38,16 @@ def _finite_vector(value, width, label):
 
 
 def _validate_phase(phase):
+    # Projectile math in the extracted timelines serializes whole frames as e.g. 41.0.
+    # Canonicalize scheduling fields only. glTF indices still require actual integers.
+    def frame(value, label):
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        return _integer(value, label)
+
     for key in ('totalFrames', 'previewFrames', 'actorDelayFrames'):
         if key in phase:
-            _integer(phase[key], key)
+            phase[key] = frame(phase[key], key)
     if not isinstance(phase.get('actorClip'), str) or not phase['actorClip']:
         raise ValueError('Phase actorClip is missing')
     if not isinstance(phase.get('kind'), str) or not phase['kind']:
@@ -52,14 +59,18 @@ def _validate_phase(phase):
         for record in records:
             if not isinstance(record, dict):
                 raise ValueError(f'Phase {collection} record must be an object')
-            _integer(record.get('frame'), f'{collection} frame')
+            record['frame'] = frame(record.get('frame'), f'{collection} frame')
             if 'lifeFrames' in record:
-                _integer(record['lifeFrames'], 'Effect lifeFrames')
+                record['lifeFrames'] = frame(record['lifeFrames'], 'Effect lifeFrames')
                 _integer(record['frame']+record['lifeFrames'], 'Effect end frame')
             if collection == 'events':
                 anchor = record.get('anchor')
-                if not isinstance(anchor, dict) or anchor.get('side') not in ('caster', 'target') or not isinstance(anchor.get('name'), str) or not anchor['name']:
-                    raise ValueError('Effect anchor must name a caster or target socket')
+                if not isinstance(anchor, dict) or anchor.get('side') not in ('caster', 'target', 'scene') or not isinstance(anchor.get('name'), str) or not anchor['name']:
+                    raise ValueError('Effect anchor must name a caster, target or scene location')
+                if anchor['side'] == 'scene' and anchor.get('origin') not in ('caster', 'target'):
+                    raise ValueError('Scene location requires its captured battle origin')
+                if 'battleOffset' in anchor:
+                    _finite_vector(anchor['battleOffset'], 3, 'Battle offset')
 
 
 def digest(path):
@@ -362,6 +373,29 @@ def _write_json(path, result, overwrite=False):
             os.unlink(temporary)
 
 
+def _camera_local_frames(node, camera):
+    """Return captured 30 Hz Unity prefab transforms and vertical FOV at cue-local time."""
+    track = node.get('cameraAnimation')
+    if not track:
+        basis = _finite_vector(node['prefabBasis'], 9, 'Camera basis').reshape(3, 3)
+        position = _finite_vector(node['prefabPos'], 3, 'Camera position')
+        values = np.append(np.column_stack((basis, position)).ravel(), camera['fieldOfView'])[None, :]
+    else:
+        if track.get('startDelaySeconds') or track.get('activationDelaySeconds') or track.get('physical'):
+            raise ValueError('Delayed or physical animated prefab cameras require explicit clock/lens support')
+        values = np.asarray(track['frames'], dtype=float)
+        if values.ndim != 2 or values.shape[1] != 13 or not 0 < len(values) <= MAX_PREVIEW_FRAMES:
+            raise ValueError('Expected 3x4 prefab camera samples with vertical FOV')
+        active = track.get('activeFrames', [1] * len(values))
+        if len(active) != len(values) or not all(flag == 1 for flag in active):
+            raise ValueError('Camera activation cuts require a second shot')
+        if track.get('loop') and (not math.isfinite(track['duration']) or track['duration'] <= 0):
+            raise ValueError('Invalid source camera loop duration')
+    if not np.isfinite(values).all() or np.any((values[:, 12] <= 0) | (values[:, 12] >= 179)):
+        raise ValueError('Invalid camera samples or field of view')
+    return values
+
+
 def export_preview(model_dir, phase_entry, output_path, *, overwrite=False):
     """Export one captured phase, with camera optional and source clocks unmodified.
 
@@ -410,8 +444,8 @@ def export_preview(model_dir, phase_entry, output_path, *, overwrite=False):
             for camera in node['cameras']:
                 if not camera.get('enabled', True) or node.get('active') is False:
                     continue
-                if camera.get('orthographic') or node.get('cameraAnimation'):
-                    raise ValueError('Animated/orthographic source cameras need a supported camera decoder')
+                if camera.get('orthographic'):
+                    raise ValueError('Orthographic source cameras require a supported projection')
                 if cue.get('anchor', {}).get('side') != 'caster':
                     raise ValueError('A target-owned source camera requires explicit target motion')
                 candidates.append((camera.get('depth', 0), cue, node, camera))
@@ -440,21 +474,24 @@ def export_preview(model_dir, phase_entry, output_path, *, overwrite=False):
         if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
             raise ValueError('Multiple equal-depth cameras require explicit selection')
         _, cue, node, camera = candidates[0]
-        _finite_vector(node['prefabBasis'], 9, 'Camera basis')
-        _finite_vector(node['prefabPos'], 3, 'Camera position')
+        local_frames = _camera_local_frames(node, camera)
+        track = node.get('cameraAnimation') or {}
         optical_values = _finite_vector([camera['fieldOfView'], camera['nearClip'], camera['farClip']], 3, 'Camera optics')
         if not 0 < optical_values[0] < 180 or not 0 < optical_values[1] < optical_values[2]:
             raise ValueError('Invalid source camera optics')
         socket = glb.socket(cue['anchor']['name'])
         local = np.eye(4)
-        local[:3, :3] = np.asarray(node['prefabBasis']).reshape(3, 3)
-        local[:3, 3] = node['prefabPos']
         reflection = np.diag([-1., 1., 1., 1.])
         samples = []
         for frame in range(cue['frame'], horizon+1):
+            elapsed = frame - cue['frame']
+            if track.get('loop'):
+                elapsed = int((elapsed / fps % track['duration']) * fps + 1e-5)
+            row = local_frames[min(elapsed, len(local_frames)-1)]
+            local[:3, :] = row[:12].reshape(3, 4)
             world = reflection @ glb.world(socket, max(0, frame-delay)/fps) @ reflection @ local
             samples.append(dict(frame=frame, position=world[:3, 3].round(8).tolist(),
-                                rotation=matrix_quaternion(world[:3, :3]).round(9).tolist(), fov_degrees=camera['fieldOfView']))
+                                rotation=matrix_quaternion(world[:3, :3]).round(9).tolist(), fov_degrees=float(row[12])))
         camera_output = dict(coordinate_system='unity-left-handed-y-up', socket=cue['anchor']['name'],
                              socket_node_index=socket, socket_node_path=list(glb.node_path(socket)),
                              near=camera['nearClip'], far=camera['farClip'], samples=samples)

@@ -146,6 +146,21 @@ class PhaseSourceTests(unittest.TestCase):
             export_preview(self.model, self.entry(), self.root/'out.json')
         self.assertFalse((self.root/'out.json').exists())
 
+    def test_integral_projectile_frames_survive_source_export(self):
+        phase = self.timelines['9001']['equippedSkills'][0]['phases'][0]
+        phase['events'][0].update(frame=41.0, lifeFrames=240.0)
+        self.save_timeline()
+        preview = export_preview(self.model, self.entry(), self.root/'whole.json')
+        self.assertEqual(preview['duration_frames'], 281)
+        self.assertIs(type(preview['duration_frames']), int)
+        self.assertIs(type(preview['effects'][0]['frame']), int)
+        self.assertEqual(preview['effects'][0]['life_frames'], 240)
+        for invalid in (41.25, True):
+            phase['events'][0]['frame'] = invalid
+            self.save_timeline()
+            with self.assertRaisesRegex(ValueError, 'events frame'):
+                export_preview(self.model, self.entry(), self.root/'invalid.json')
+
     def test_held_pose_and_delay_retained(self):
         phase = self.timelines['9001']['equippedSkills'][0]['phases'][0]
         phase['keepActorPose'] = True; phase['actorDelayFrames'] = 5
@@ -153,6 +168,34 @@ class PhaseSourceTests(unittest.TestCase):
         result = export_preview(self.model, self.entry(), self.root/'out.json')
         self.assertTrue(result['actor_keep_pose'])
         self.assertEqual(result['actor_delay_frames'], 5)
+
+    def test_scene_anchor_preserves_formation_offset(self):
+        phase = self.timelines['9001']['equippedSkills'][0]['phases'][0]
+        anchor = dict(side='scene', origin='target', name='EnemySceneCenter', battleOffset=[0, 0, 6])
+        phase['events'][0]['anchor'] = anchor
+        self.save_timeline()
+        result = export_preview(self.model, self.entry(), self.root/'board.json')
+        self.assertEqual(result['effects'][0]['anchor'], anchor)
+
+    def test_prefab_camera_uses_cue_local_frames_and_animated_fov(self):
+        phase = self.timelines['9001']['equippedSkills'][0]['phases'][0]
+        phase['events'][0].update(frame=4, anchor=dict(side='caster', name='root'))
+        self.save_timeline()
+        first = [1,0,0,4, 0,1,0,0, 0,0,1,0, 35]
+        second = [1,0,0,9, 0,1,0,0, 0,0,1,0, 48]
+        node = dict(prefab='x901_hit', cameras=[dict(fieldOfView=52, nearClip=.3, farClip=500)],
+                    cameraAnimation=dict(frames=[first,second], activeFrames=[1,1]))
+        file = self.root/'Vfx_assets/x901/hit.json'
+        file.write_text(json.dumps({'effect_nodes':[node]}))
+        result = export_preview(self.model, self.entry(), self.root/'anim-camera.json')
+        samples = result['camera']['samples']
+        self.assertEqual([(s['frame'], s['fov_degrees']) for s in samples[:2]], [(4,35),(5,48)])
+        self.assertAlmostEqual(samples[0]['position'][0], 4 - 4/135)
+        self.assertAlmostEqual(samples[1]['position'][0], 9 - 5/135)
+        node['cameraAnimation']['activeFrames'][1] = 0
+        file.write_text(json.dumps({'effect_nodes':[node]}))
+        with self.assertRaisesRegex(ValueError, 'activation cuts'):
+            export_preview(self.model, self.entry(), self.root/'disabled.json')
 
     def test_foreign_role_rejected(self):
         with self.assertRaisesRegex(ValueError, 'does not belong'):

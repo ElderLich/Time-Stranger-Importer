@@ -133,6 +133,8 @@ def create_recipe(model_path, phase_id, target_chr='', motion_suffix='', donor_b
     sockets = []
     for effect in source['effects']:
         anchor = effect['source_event']['anchor']
+        if anchor['side'] == 'scene':
+            continue
         row = {'side': anchor['side'], 'source_socket': anchor['name'], 'native_socket': ''}
         if row not in sockets:
             sockets.append(row)
@@ -365,6 +367,9 @@ def _collect(recipe):
         selected = [item['manifest'] for item in components if item['manifest']['kind'] == 'effect'
                     and item['manifest']['source']['event_order'] == order]
         anchor = source_event['anchor']
+        if anchor['side'] == 'scene':
+            block('scene-anchor-unmapped', f"Battle scene location {anchor['name']} needs a native placement binding", event_order=order)
+            continue
         socket = sockets.get((anchor['side'], anchor['name']))
         if not selected:
             block('effect-components-missing', f'No converted components for source event {order}', event_order=order)
