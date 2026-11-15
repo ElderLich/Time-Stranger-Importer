@@ -253,7 +253,8 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
 
     return obj
 
-def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotation(math.radians(-90), 4, 'X')):
+def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotation(math.radians(-90), 4, 'X'),
+                       *, split_palettes=False):
     mesh = mesh_obj.data
     if any(mod.type != 'ARMATURE' and (mod.show_viewport or mod.show_render) for mod in mesh_obj.modifiers):
         raise ValueError(f"Mesh '{mesh.name}' has unapplied modifiers; apply them before export")
@@ -320,10 +321,9 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
         selected[:, :3] = transform_directions(selected[:, :3])
         mesh_out.set_tangent(selected.astype(np.float16))
 
+    vert_indices = None
     if skeleton is not None:
         mesh_out.matrix_palette = [b for b in skeleton.bones if b.name in mesh_obj.vertex_groups]
-        if len(mesh_out.matrix_palette) > 256:
-            raise ValueError(f"Mesh '{mesh.name}' has more than 256 palette bones")
         name_to_id = {b.name: i for i, b in enumerate(mesh_out.matrix_palette)}
         group_to_id = {g.index: name_to_id[g.name] for g in mesh_obj.vertex_groups if g.name in name_to_id}
         weights_by_vertex = []
@@ -336,7 +336,8 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
         groups_per_vertex = max((len(weights_by_vertex[i]) for i in source_vertices), default=0)
         if not groups_per_vertex:
             raise ValueError(f"Mesh '{mesh.name}' has no weights referencing its armature")
-        vert_indices = np.zeros((vertex_count, groups_per_vertex), dtype=np.uint8)
+        groups_per_vertex = max(groups_per_vertex, int(mesh.get("DSTS_min_skin_influences", 0)))
+        vert_indices = np.zeros((vertex_count, groups_per_vertex), dtype=np.int32)
         vert_weights = np.zeros((vertex_count, groups_per_vertex), dtype=np.float32)
         for vi, source in enumerate(source_vertices):
             weights = weights_by_vertex[source]
@@ -346,7 +347,6 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
             for gi, (index, weight) in enumerate(weights):
                 vert_indices[vi, gi] = index
                 vert_weights[vi, gi] = weight / total
-        mesh_out.set_index(vert_indices)
         mesh_out.set_weight(vert_weights.astype(np.float16))
 
     # -- ATTRIBUTES --
@@ -422,4 +422,10 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
 
     mesh_out.name = mesh.name
 
-    return mesh_out
+    from .skin_palette import split_skin_palette
+    draws = split_skin_palette(mesh_out, vert_indices)
+    if split_palettes:
+        return draws
+    if len(draws) != 1:
+        raise ValueError(f"'{mesh.name}' needs multiple native skin palettes; request split_palettes=True")
+    return draws[0]

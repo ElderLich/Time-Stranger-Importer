@@ -1380,6 +1380,32 @@ def _build_outline_mesh(context, body_objects, armature_obj, outline_info, colle
     return outline
 
 
+def _match_skin_programs(obj, armature, donor_path):
+    from pathlib import Path
+    from .material import find_data_group
+    from .skin_palette import skin_variant
+    bone_groups = {g.index for g in obj.vertex_groups if armature.data.bones.get(g.name)}
+    influences = min(4, max(sum(g.group in bone_groups and g.weight > 0 for g in v.groups)
+                            for v in obj.data.vertices))
+    # Native one-influence body VPs may read the joint number from POSITION.w.
+    # NC meshes store ordinary XYZ positions and explicit blend indices. Keep
+    # that representation on rigid models with a zero-weight second lane.
+    if influences == 1:
+        influences = 2
+        obj.data['DSTS_min_skin_influences'] = 2
+    group = find_data_group(obj.data.materials[0])
+    node = next(n for n in group.node_tree.nodes if n.bl_idname == 'DSTS_ShaderData')
+    shaders = Path(bpy.path.abspath(donor_path)).parent / 'shaders'
+    for slot in node.shader_strings:
+        key = skin_variant(slot.value, influences)
+        if key == slot.value:
+            continue
+        if shaders.is_dir() and not all((shaders/(key+suffix)).is_file() for suffix in ('_vp.shad','_fp.shad')):
+            raise NcImportError(f'{obj.name} requires a {influences}-influence native shader variant '
+                                f'missing from {shaders}: {key}. Choose a compatible donor.')
+        slot.value = key
+
+
 def import_nc_model(context, filepath, donor_geom_path, build_outline=True):
     from .scene_state import snapshot, rollback
     before = snapshot()
@@ -1749,8 +1775,12 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
     # --- outline ----------------------------------------------------------
     if build_outline and outline_info is not None:
         outline = _build_outline_mesh(context, body_objects, new_armature, outline_info, collection)
+        _match_skin_programs(outline, new_armature, donor_geom_path)
         _log(f"  outline: material={outline_info['material'].name} "
              f"verts={len(outline.data.vertices)} (white vertex color)")
+
+    for obj in body_objects:
+        _match_skin_programs(obj, new_armature, donor_geom_path)
 
     # --- clean up the rest of the glb import ------------------------------
     keep = set(body_objects) | {new_armature}

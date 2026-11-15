@@ -15,6 +15,10 @@ import struct
 import tempfile
 from collections import Counter
 
+if __package__:
+    from .skin_palette import PALETTE_LIMIT
+else:
+    from skin_palette import PALETTE_LIMIT
 
 def _name(value):
     if (not value or value in ('.', '..') or value.rstrip(' .') != value
@@ -58,6 +62,11 @@ def validate_runtime_skinning(raw, geom):
     bone_indices = {bone: index for index, bone in enumerate(bones)}
     fast_palettes = []
     for mesh in geom.meshes:
+        if len(mesh.matrix_palette) > PALETTE_LIMIT and any(
+                int(index) >= PALETTE_LIMIT and weight != 0
+                for vertex in mesh.vertices for index, weight in zip(vertex.index, vertex.weight)):
+            raise ValueError(f'{mesh.name}: the native signed-byte skin input supports local indices below '
+                             f'{PALETTE_LIMIT}; export the GEOM again to partition its triangles')
         if not mesh.flag_2:
             continue
         indices = [bone_indices[bone] for bone in mesh.matrix_palette]

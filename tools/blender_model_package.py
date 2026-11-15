@@ -10,6 +10,7 @@ import tempfile
 from unittest.mock import patch
 
 import bpy
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('Time_Stranger_Importer', ROOT/'__init__.py',
@@ -20,6 +21,7 @@ spec.loader.exec_module(addon)
 addon.register()
 from Time_Stranger_Importer.src.model_package import package_native_model, plan_model_package, validate_runtime_skinning
 from Time_Stranger_Importer.src.backend import load_format_modules
+from Time_Stranger_Importer.src.skin_palette import split_skin_palette
 from Time_Stranger_Importer.src.anim.InterfaceHundredLine import AnimFileHundredLine
 from Time_Stranger_Importer.src.anim.BinaryHundredLine import AnimFileBinary
 
@@ -189,6 +191,29 @@ with tempfile.TemporaryDirectory(prefix='dsts_model_package_') as temp:
     assert model.with_suffix('.nlst').read_bytes() == original_nlst
     assert model.with_suffix('.anim').read_bytes() == original_anim
     print('PASS same-stem motion scope and explicit SPRK/BSON rejection')
+
+formats = load_format_modules()[0]
+mesh = formats.Mesh()
+mesh.name = 'many weighted joints'
+mesh.primitive = 1
+mesh.set_vertex_count(270)
+mesh.indices = list(range(270))
+bones = [formats.Bone() for _ in range(270)]
+for i, bone in enumerate(bones):
+    bone.name = f'joint{i}'
+mesh.matrix_palette = bones
+mesh.set_position(np.zeros((270,3), dtype=np.float32))
+mesh.set_weight(np.ones((270,1), dtype=np.float16))
+parts = split_skin_palette(mesh, np.arange(270).reshape(-1,1))
+recovered = []
+for part in parts:
+    assert len(part.matrix_palette) <= 128
+    for vi in part.get_indices():
+        local = int(part.vertices[vi].index[0])
+        assert 0 <= local < 128
+        recovered.append(part.matrix_palette[local].name)
+assert recovered == [b.name for b in bones] and len(parts) > 1
+print('PASS signed local skin indices preserve 270 source joints in triangle order')
 
 addon.unregister()
 print('ALL MODEL PACKAGE CHECKS PASSED', bpy.app.version_string)

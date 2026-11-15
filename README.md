@@ -2,6 +2,8 @@
 
 [Add a playable New Century Digimon to Time Stranger](docs/add-a-playable-digimon.md) covers the full path from a library model through cinematic and cast export, effects, mode changes, portraits, dot sprites, and a staged mod.
 
+Version 1.5.4 splits large skinned meshes into native draws of up to 128 bones. New Century imports also select the donor shader variant for each mesh’s actual weight count, including the outline. These changes preserve the weights on high-bone-count bodies, clothing and wings.
+
 Version 1.5.3 adds **File → Export → Digimon Time Stranger → Native Skill Sequence**.
 Build one native attack from trimmed actor phases, source cinematic and ordinary battle cameras,
 and converted caster effects. [Sequence recipes](docs/native-skill-sequence.md)

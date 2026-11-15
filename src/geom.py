@@ -370,9 +370,9 @@ def export_geom(collection):
                 zlib.crc32(mat_data.name.encode('utf-8')) ^ 0xFFFFFFFF)
 
     for obj in [o for o in collection.objects if o.type == "MESH"]:
-        mesh_out = mesh.export_mesh_object(obj, geom.skeleton)
-        mesh_out.material = object_to_mat[obj.data.materials[0]]
-        geom.meshes.append(mesh_out)
+        for mesh_out in mesh.export_mesh_object(obj, geom.skeleton, split_palettes=True):
+            mesh_out.material = object_to_mat[obj.data.materials[0]]
+            geom.meshes.append(mesh_out)
 
     for channel in getattr(geom.skeleton, 'float_channels', []):
         if channel.flags == 8:
