@@ -1,0 +1,510 @@
+{
+  "schema": "skill-runtime-passive-observer-evidence-v1",
+  "executable": {
+    "path": "D:\\Programs\\Steam\\steamapps\\common\\Digimon Story Time Stranger\\Digimon Story Time Stranger.exe",
+    "bytes": 30453760,
+    "sha256": "ff9de825a543bf874cfb7e73ed951256d3ce4e8702957afa3b26ca6487a81688"
+  },
+  "prefixes": [
+    {
+      "rva": "0x50b530",
+      "hex": "48895c241048894c2408555657415641574883ec40498be88bda488bf1e8ee91eeffc786e00000000000803f488d0555c6e7004889064533ff4c89bee8000000",
+      "file_match": true
+    },
+    {
+      "rva": "0x976720",
+      "hex": "40534883ec20488bd9488b014885c07520b9b8ca0200e8752290ff48894424304885c07409488bc8e8a3ff0a00904889034883c4205bc3",
+      "file_match": true
+    },
+    {
+      "rva": "0x99f8e0",
+      "hex": "488b8180000000c3",
+      "file_match": true
+    },
+    {
+      "rva": "0x9e43a0",
+      "hex": "40534883ec20e865b93800488bc8488bd8e83ab9380083f8067529488b8b0001000033d24885c9488d8120ffffff480f44c24885c0740d488b80280400004883",
+      "file_match": true
+    },
+    {
+      "rva": "0x9e48f0",
+      "hex": "4883ec28e8a7faffff4885c075054883c428c3488b80180100004883c428c3",
+      "file_match": true
+    },
+    {
+      "rva": "0x9e5240",
+      "hex": "48895c2418574883ec20488bf9bbffffffff4885c9750d8bc3488b5c24404883c4205fc348896c243048897424388bb1f80000008b89f400000083e9010f84a1",
+      "file_match": true
+    },
+    {
+      "rva": "0x9e54d0",
+      "hex": "405741574883ec28488bf941bfffffffff4885c9750b418bc74883c428415f5fc348895c2440418bdf48896c24488ba9f80000008b89f4000000488974245033",
+      "file_match": true
+    },
+    {
+      "rva": "0x9e5950",
+      "hex": "4883ec28e847eaffff4885c075054883c428c3488b80100100004883c428c3",
+      "file_match": true
+    },
+    {
+      "rva": "0x9e6150",
+      "hex": "4883ec28e847e2ffff4885c075054883c428c3488b80400100004883c428c3",
+      "file_match": true
+    },
+    {
+      "rva": "0xa1f690",
+      "hex": "48895c2418555641574883ec20488b99f80000004032f64c8bb900010000488be94c03fb493bdf747b48897c24404c897424480f1f4000660f1f840000000000",
+      "file_match": true
+    },
+    {
+      "rva": "0xa235c0",
+      "hex": "48895c2410488974241848894c2408574883ec20488bf9e864119dff90488d05fc8fa100488907c687e000000000488d9fe800000033f6488933488973084889",
+      "file_match": true
+    },
+    {
+      "rva": "0xa24560",
+      "hex": "488bc448895810488968184889702057415641574883ec70488bd9c6400801e87cf88fff90488bcbe893f5ffff4c8dbb20010000498b7f18498b1f33ed0f1f00",
+      "file_match": true
+    },
+    {
+      "rva": "0xa266f0",
+      "hex": "48895c2418488974242048894c240857415641574883ec30488bf9e830e09cff90488d05b867a10048890733f689b7e0000000c787e4000000b80b0000c787e8",
+      "file_match": true
+    },
+    {
+      "rva": "0xd6fcf0",
+      "hex": "488b81f8000000488b40388b4040c3",
+      "file_match": true
+    },
+    {
+      "rva": "0xd6fd10",
+      "hex": "488b05496ee300c3",
+      "file_match": true
+    }
+  ],
+  "native_evidence": [
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/index.json",
+      "bytes": 10018,
+      "sha256": "ccb731993357a5ab3ddf63b49769f4439b9bbb1071d6b7e3373056ad184a18c2"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/000000014050b530.asm.txt",
+      "bytes": 8673,
+      "sha256": "6f087cdf1bdc395be24cad827b91a4ea43af774ee6f892b416fc713a77df9360"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/000000014050b530.cpp",
+      "bytes": 4385,
+      "sha256": "d66bb5d078eaf26e252fb7691f5940bdd5f355a20c56911861e2f12f6a9193b9"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140976720.asm.txt",
+      "bytes": 646,
+      "sha256": "f9484d5f0c15cabc040c5440fe6549b31c7a76857598568fb88f4102d4af83b6"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140976720.cpp",
+      "bytes": 363,
+      "sha256": "f2f66d8f08075ac3ecd601970cee61748912884ce5d927634d0440f3ad4497ab"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/000000014099f8e0.asm.txt",
+      "bytes": 64,
+      "sha256": "21a9e67890cac20f9984c19470df6e0672ac83c97298791e71ec3708413e05d1"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/000000014099f8e0.cpp",
+      "bytes": 163,
+      "sha256": "a315371052fc72110c078d577a1c331a8b9c5a959064c9e995ee6d4ddfddfc4c"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e43a0.asm.txt",
+      "bytes": 1118,
+      "sha256": "b1c730c87720500378105157b2e9082200da65d8f334965e7b09f75f87b23f7d"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e43a0.cpp",
+      "bytes": 575,
+      "sha256": "95ef303e0de422e7fa127642235acb4a773c90647863f74aadb54afbfcaab2d2"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e48f0.asm.txt",
+      "bytes": 314,
+      "sha256": "dcf614d99fd7c54879ec9d7a4feac79e8b5e4312f7d4ffe5528b7128b026e733"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e48f0.cpp",
+      "bytes": 240,
+      "sha256": "113759d869e609ae5e608b96a015c03c7f6390033e2d2040561befb582f3395f"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e5240.asm.txt",
+      "bytes": 3699,
+      "sha256": "020300e09137b922fd5ddaa7791bbb11f89d29c215b08e3826620f3b99c963d2"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e5240.cpp",
+      "bytes": 1671,
+      "sha256": "f2b5bac75d6a73903fa1a8399f55e84c2f248e731095b7f351cc979b76f79686"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e54d0.asm.txt",
+      "bytes": 5308,
+      "sha256": "d3399b030c5334dd1eea87f678900a9c4ea9a13d6c5ea8a9a72826b9979223f2"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e54d0.cpp",
+      "bytes": 2522,
+      "sha256": "a28fa7221a852353098749443e4f94174133dd0f43c983bdf8fe3919a7aa0d05"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e5950.asm.txt",
+      "bytes": 314,
+      "sha256": "cc0089b576f222d3e3e8e822bc8c3f74ee1c5ddc75117ceb98844af0e30bd5a4"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e5950.cpp",
+      "bytes": 240,
+      "sha256": "28b156a0084fb3428c02b8e3c351000897ba6b9c17b8f842955b9d1409343be6"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e6150.asm.txt",
+      "bytes": 314,
+      "sha256": "ee2a53e9baf100d1de524da84b75c785fa775f5bfc3f07ee5a96cadc844967f2"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/00000001409e6150.cpp",
+      "bytes": 240,
+      "sha256": "50f83b5c5ff3bb7893044a4bb9eead01de083e90a426e227ab4753b0aa33e6f7"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a1f690.asm.txt",
+      "bytes": 2258,
+      "sha256": "51cd28e97c82296779414a2a643733265bece64c62519d9a22339244021080b6"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a1f690.cpp",
+      "bytes": 916,
+      "sha256": "f71ccb62426eb8e5c6d762061843406b5b709a83b49a03df7f993ad3b081b901"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a235c0.asm.txt",
+      "bytes": 2098,
+      "sha256": "cf5f52f911d7a8c7cf4d7bd3438f0b479a9442f31a78f97cbba93ca92c3117e2"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a235c0.cpp",
+      "bytes": 1046,
+      "sha256": "1c7d9ef6eea3ea4acaf97be7ebffac6f33c64f609a6d29b9e56eba3b457d3bc1"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a24560.asm.txt",
+      "bytes": 5252,
+      "sha256": "e156a1900440dc1211a376acd241afdd9049664a1346d50f89babbb501d08b39"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a24560.cpp",
+      "bytes": 2720,
+      "sha256": "233c935f3231e204ebb735229342b89fcd1429d30de824184e2c930c555a889f"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a266f0.asm.txt",
+      "bytes": 23436,
+      "sha256": "0391c4dded44b7211d4250bc6e519d9d9face011c74e5a6af30cc7ed0949b95c"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140a266f0.cpp",
+      "bytes": 12669,
+      "sha256": "4b650c4c5e4ab84ad0e9f463a494072ff41538a1660ea2ba0c9b8aa2610cc570"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140d6fcf0.asm.txt",
+      "bytes": 147,
+      "sha256": "7f506dd2ba0609712643ecd543c3098d61d461e53f48fed6ed7ddf59d1a3b370"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140d6fcf0.cpp",
+      "bytes": 209,
+      "sha256": "99cca33759a0f4e913d27e4208e746925880a1d0528cf1542aaca6cb336dcc62"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140d6fd10.asm.txt",
+      "bytes": 73,
+      "sha256": "14aa9dbe6f5f75f7995a4b22a285f1e5dcef1541904532c1a05aad862f8b0307"
+    },
+    {
+      "path": "Time Stranger/local/ordinary-skill-native-candidate/actors/passive-observer-roots-2026-11-15/0000000140d6fd10.cpp",
+      "bytes": 136,
+      "sha256": "3913e76a96b3d7ca374b1f253190ed523325b13d1ea22d9da48d600eef4f1c57"
+    },
+    {
+      "path": "Time Stranger/src/native/functions/0000000140c54c20.cpp",
+      "bytes": 155,
+      "sha256": "a002ee9d5ec2cf4dd452119e3ded0e13878c18111962ea136897f616c5066f77"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/.gitignore",
+      "bytes": 40,
+      "sha256": "1322e512bbc1dc74e4e87572fececff243693066898fe087114691bba6611a47"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/build.ps1",
+      "bytes": 4741,
+      "sha256": "35618a9aef8e1a73c253e48e8614b3cfb73f5bdfced8b618c02ddcbab39ba156"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/Directory.Build.props",
+      "bytes": 269,
+      "sha256": "46f65e594c970b9dfd6a1c4e7eb35098221b08149de5f2d6db0ca4f1cf16cbd7"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/NuGet.Config",
+      "bytes": 113,
+      "sha256": "2142cfb2dfa2c7feefbe40fabcc68b0dfecadafa99a1db9b70239d977cf2a7ef"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/observer/decoder.py",
+      "bytes": 10658,
+      "sha256": "2e476bbc1006492d95ecdc120fec016621c12ef524d74f26616f3d7a33e9d6c4"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/observer/memory.py",
+      "bytes": 7257,
+      "sha256": "eaee4c59ef0006c61484725fa77e06f107bfbce417838bebc8782c267cb4956b"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/observer/observe.py",
+      "bytes": 4487,
+      "sha256": "a94f42e7c0e28ab96329b3711c41c9fd82f02b48d1a6b1941905729bf43f9313"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/observer/README.md",
+      "bytes": 7073,
+      "sha256": "613eff8fb4ac115317e3add6b8dbf8c036e619bad3ac83e86e2ef56a4cb38e53"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/observer/test_observer.py",
+      "bytes": 10463,
+      "sha256": "785e3f63792f61d065a6016435c44693974ad1f01dfb7a6be88443c30a3ac6fe"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/observer/windows_memory.py",
+      "bytes": 5818,
+      "sha256": "19f970d773ec4b576cdf207d6ea32ead02e933ed739f20064380e0b823a83f8d"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/observer/write_test_fixtures.py",
+      "bytes": 1229,
+      "sha256": "054d14025c2c9d1959fc8106ba02de3c5a9e8fcd997911cc4aaf7a224950a5b8"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/prepare-net9-reference.ps1",
+      "bytes": 1365,
+      "sha256": "15f0260f077b1452da9eb34c21908057e1101ee3a9cb7f933c9fefbe742d1768"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/README.md",
+      "bytes": 7687,
+      "sha256": "9424d8540c15ffbbd32ea120445a766ced5970846b70e56069ff90321543e66f"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/research/native-layout-evidence.md",
+      "bytes": 6934,
+      "sha256": "c40140b8063c8d53624aa118c5578bc4c7978740c1c0d30a1be0a383fb7966dd"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/research/native-seams-evidence.json",
+      "bytes": 40493,
+      "sha256": "06effcfc481634589cd7cab5745ba10b0ccdfc177d9c6f67db5c30148b7b0718"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Core/ActionContexts.cs",
+      "bytes": 11189,
+      "sha256": "8865ac53e8ed81a6bb72ec81b89e773e2f2d6e0f3f23527318038c844d6197f2"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Core/Contracts.cs",
+      "bytes": 5941,
+      "sha256": "301817a43ad1372d41bae0fe88f1de93f77d4c61a16c7b02eb22d69e45532eec"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Core/NativeProfile.cs",
+      "bytes": 7503,
+      "sha256": "49d7849e428deaab175f83716a8b721860c861a0d3cf70d4d921a4d92f4d13ed"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Core/SkillRuntime.Core.csproj",
+      "bytes": 128,
+      "sha256": "5138018c65b7d7fb2e720486c60d2cd1a95fab8209271a8e57a553b8dec460fd"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.HostTests/Program.cs",
+      "bytes": 3274,
+      "sha256": "089fd0d75d26adf96c25ee4bc32ef37b24a32738672e5e1f6112ab85108a3146"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.HostTests/SkillRuntime.HostTests.csproj",
+      "bytes": 582,
+      "sha256": "4ee2f07ea482a9ba74e3856109c698765f5d8ea5c070786656b839296e52f226"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Reloaded/SkillRuntime.Reloaded.csproj",
+      "bytes": 1310,
+      "sha256": "ea761b038414235507e985fde409629cfb7aa282532e25f77bf545e37a9e1302"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Reloaded/Startup.cs",
+      "bytes": 1549,
+      "sha256": "d9362939146c3a41f54f546dc069929b2089ed33cc5ab2e943f64ab8844f53e4"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Tests/Program.cs",
+      "bytes": 20738,
+      "sha256": "e54972e1d776b6322bc334f07061ac365ccfe48606da56bc5492f13ded1d3b9f"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/SkillRuntime.Tests/SkillRuntime.Tests.csproj",
+      "bytes": 251,
+      "sha256": "0f2539786fa8caf0ede6f385f7431cd826e760ccf8bdc8842aedaa7c05162168"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/tools/capture_observer_evidence.py",
+      "bytes": 3624,
+      "sha256": "c2f69b9b8b6a61c1d02aa343b7f0275781bcd5b8383cfc7f5005f47c8efe21de"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/tools/capture_offline_evidence.py",
+      "bytes": 2718,
+      "sha256": "0f0bf09e69df8e621e261bcf54ddf61f7ccbbd71ce5b074e23d4480d5d14ec9a"
+    }
+  ],
+  "core_tests": {
+    "tests": 28,
+    "passed": 28,
+    "failed": 0,
+    "nativeRuntimeEnabled": false
+  },
+  "host_tests": {
+    "hostSmokePassed": true,
+    "nativeRuntimeEnabled": false,
+    "liveLoaderTested": false
+  },
+  "host_framework": "net9.0",
+  "observer_tests": {
+    "run": 23,
+    "passed": 23
+  },
+  "build_report": {
+    "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/build-report.json",
+    "bytes": 2921,
+    "sha256": "ef40866e1fcd1c7f268b3c4b31597c80d6a5ca38d9db641f22b176c54f308faf"
+  },
+  "logs": [
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/build-core-tests.log",
+      "bytes": 418,
+      "sha256": "b4f46e6b3a886a8ccdeae87dafa1f35b0e0a45893198e2dd026b931522b5e3b9"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/build-host-tests.log",
+      "bytes": 603,
+      "sha256": "647799304cbdde6a688c9e5ee0706415e17f0acce5d2f17bbbac1924a4dddc17"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/core-tests.log",
+      "bytes": 1570,
+      "sha256": "f61c2324eeb7bdcd19610b42a9ec040bb606769a79ac4be69ea88e2412ac0a93"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/executable-assessment.log",
+      "bytes": 844,
+      "sha256": "67a7674655ae1f8433732198ebb23c1a202775890a1d9594e191050db2417415"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/final-build.log",
+      "bytes": 4076,
+      "sha256": "3a258d79d58e4666d26bf962ef2a08dd1d74282c701a21940e0810fc333cd5eb"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/host-tests.log",
+      "bytes": 179,
+      "sha256": "26654e6c8e568adde8898e3e0ebde67cfb10445a73075249e48b6447e8efb8f2"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/observer-tests.log",
+      "bytes": 2691,
+      "sha256": "d8d716ad65a4b1ae2f029639e93248474fa08b910c95be3342544b4fc28e0630"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/rejected-interface-build.log",
+      "bytes": 849,
+      "sha256": "d41525c2e814334e684662cfaf369bd126e39d25a2a5cb8fbb66869eb6d895ac"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/restore-core-tests.log",
+      "bytes": 231,
+      "sha256": "7dc81724388bc4febf9340c7b7ffc71a423a62fb27fdc9c2bdfadac9c849d753"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/restore-host-tests.log",
+      "bytes": 231,
+      "sha256": "c4e8455929d90393f9e4456cb6ade52fe07860da133662b27e0fae544d3ae892"
+    }
+  ],
+  "synthetic_fixtures": [
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/observer-fixtures/current-action.expected.json",
+      "bytes": 3686,
+      "sha256": "2481c3c4e0e2f05f3f529b437b6246beff3abdaca8758318ebbd5c7173666fe4"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/observer-fixtures/current-action.json",
+      "bytes": 7083,
+      "sha256": "6aa210718996dd074eb809fe866d191dfcaaa59e8a53b2bd7fc3781e32fafdca"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/observer-fixtures/no-battle.expected.json",
+      "bytes": 407,
+      "sha256": "02f01d8b05e32a7ba76f65ee9f1a9b490f0091825bc4ab0472d926f13b5c78ce"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/observer-fixtures/no-battle.json",
+      "bytes": 515,
+      "sha256": "19651f766a9b3585977111763c3139e7bd7295c6830fea9800c6fcf7f7071b04"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/observer-fixtures/other-direction.expected.json",
+      "bytes": 523,
+      "sha256": "62b73cf4a58f937a2611d6db9ba7ca84534917f68f6663ca3c47a5d814cd8893"
+    },
+    {
+      "path": "Time Stranger Importer/runtime/SkillRuntime/artifacts/observer-fixtures/other-direction.json",
+      "bytes": 1061,
+      "sha256": "372bc8eead18076d4e4a6d03149c9e112bd114d064a49693c77d1a5c3532281c"
+    }
+  ],
+  "reference_package": {
+    "package": "Microsoft.NETCore.App.Ref",
+    "version": "9.0.22",
+    "bytes": 6965731,
+    "sha256": "d54eb743bfb407095944d32fc99183da6e8a7f50f1ba930d600a2bcb55cc8813",
+    "source": "https://api.nuget.org/v3/index.json",
+    "provenance": "Existing local NuGet cache, Microsoft author, embedded NuGet signature, matching pinned SHA256",
+    "runtime_repository_commit": "faaecba82df8933d7af60972138ce25f9c776cbd",
+    "workspace_feed": "D:\\Programs\\GitHub\\Digimon Modding\\Time Stranger Importer\\runtime\\SkillRuntime\\artifacts\\dependencies",
+    "installed_runtimes_changed": false
+  },
+  "readiness": {
+    "checked_utc": "2026-11-15T07:43:22.0256007Z",
+    "process_name": "Digimon Story Time Stranger",
+    "count": 0,
+    "ids": [],
+    "live_process_opened": false,
+    "reason": "No matching process available; readiness inventory only"
+  },
+  "native_runtime_enabled": false,
+  "live_game_capture_verified": false
+}

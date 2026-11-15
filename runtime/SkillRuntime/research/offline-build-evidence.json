@@ -1,0 +1,196 @@
+{
+  "schema": "skill-runtime-offline-evidence-v1",
+  "sdk": "10.0.403",
+  "core_framework": "netstandard2.1",
+  "host_framework": "net10.0",
+  "core_tests": {
+    "tests": 28,
+    "passed": 28,
+    "failed": 0,
+    "nativeRuntimeEnabled": false
+  },
+  "host_tests": {
+    "hostSmokePassed": true,
+    "nativeRuntimeEnabled": false,
+    "liveLoaderTested": false
+  },
+  "unreviewed_interface_rejected": true,
+  "dependency": {
+    "path": "D:\\Digimon Modding\\Programs\\Reloaded II\\Loader\\X64\\Reloaded.Mod.Interfaces.dll",
+    "bytes": 40960,
+    "sha256": "98b33df0f380ca7361bffa9a0328c63c7d96140fc2070d180864fa157f00c88a"
+  },
+  "native_profile": {
+    "FingerprintMatches": true,
+    "ObservedSha256": "ff9de825a543bf874cfb7e73ed951256d3ce4e8702957afa3b26ca6487a81688",
+    "Refusals": [
+      "Native calling conventions, argument layouts, instruction signatures and hook lifetimes are not certified.",
+      "Current-action resolved targets under redirection, counters and multiple hits are not certified.",
+      "Action/coroutine identity across yield, abort and destruction is not certified.",
+      "Actor spawn generations and attached/special model ownership are not certified.",
+      "Exact owned position/yaw setter side effects and tween restoration are not certified.",
+      "Action-scoped cleanup ordering and native clock/concurrent direction behavior are not certified.",
+      "Dormant scaffold has no native backend, hooks or activation path."
+    ],
+    "RuntimeEnabled": false
+  },
+  "outputs": [
+    {
+      "path": "SkillRuntime.Core/bin/Release/netstandard2.1/SkillRuntime.Core.dll",
+      "bytes": 24576,
+      "sha256": "d99e8323331d5ad079a0fb36f2506771b9c716b47b9e2a2da5b277ec83525f62"
+    },
+    {
+      "path": "SkillRuntime.Tests/bin/Release/net10.0/SkillRuntime.Tests.dll",
+      "bytes": 30208,
+      "sha256": "5171fdcb415a65d57a53927618f5229e845959e4a0a6154ecb4c3d4814b522af"
+    },
+    {
+      "path": "SkillRuntime.Reloaded/bin/Release/net10.0/SkillRuntime.Reloaded.dll",
+      "bytes": 5632,
+      "sha256": "8fac444d1591aa600b549436f880042c1673983c1a35d5fdbd73c87b1dc8f28c"
+    }
+  ],
+  "sources": [
+    {
+      "path": ".gitignore",
+      "bytes": 27,
+      "sha256": "93b29f8b9a1d76ff55de359aedd492abc6a144c30dbdc09959f4aa8deeb6ad3a"
+    },
+    {
+      "path": "build.ps1",
+      "bytes": 3675,
+      "sha256": "e77d1eec1b45602b88417f0f4bdf30da1a826f62d0b3ec21745ae48268da9644"
+    },
+    {
+      "path": "Directory.Build.props",
+      "bytes": 269,
+      "sha256": "46f65e594c970b9dfd6a1c4e7eb35098221b08149de5f2d6db0ca4f1cf16cbd7"
+    },
+    {
+      "path": "NuGet.Config",
+      "bytes": 113,
+      "sha256": "2142cfb2dfa2c7feefbe40fabcc68b0dfecadafa99a1db9b70239d977cf2a7ef"
+    },
+    {
+      "path": "README.md",
+      "bytes": 6547,
+      "sha256": "df57f4a66be4a7dd78d97ea7bcc466a8be10189a7f153591a86166eaed4581d6"
+    },
+    {
+      "path": "research/native-layout-evidence.md",
+      "bytes": 6934,
+      "sha256": "c40140b8063c8d53624aa118c5578bc4c7978740c1c0d30a1be0a383fb7966dd"
+    },
+    {
+      "path": "research/native-seams-evidence.json",
+      "bytes": 40493,
+      "sha256": "06effcfc481634589cd7cab5745ba10b0ccdfc177d9c6f67db5c30148b7b0718"
+    },
+    {
+      "path": "SkillRuntime.Core/ActionContexts.cs",
+      "bytes": 11189,
+      "sha256": "8865ac53e8ed81a6bb72ec81b89e773e2f2d6e0f3f23527318038c844d6197f2"
+    },
+    {
+      "path": "SkillRuntime.Core/Contracts.cs",
+      "bytes": 5941,
+      "sha256": "301817a43ad1372d41bae0fe88f1de93f77d4c61a16c7b02eb22d69e45532eec"
+    },
+    {
+      "path": "SkillRuntime.Core/NativeProfile.cs",
+      "bytes": 7503,
+      "sha256": "49d7849e428deaab175f83716a8b721860c861a0d3cf70d4d921a4d92f4d13ed"
+    },
+    {
+      "path": "SkillRuntime.Core/SkillRuntime.Core.csproj",
+      "bytes": 128,
+      "sha256": "5138018c65b7d7fb2e720486c60d2cd1a95fab8209271a8e57a553b8dec460fd"
+    },
+    {
+      "path": "SkillRuntime.HostTests/Program.cs",
+      "bytes": 3274,
+      "sha256": "089fd0d75d26adf96c25ee4bc32ef37b24a32738672e5e1f6112ab85108a3146"
+    },
+    {
+      "path": "SkillRuntime.HostTests/SkillRuntime.HostTests.csproj",
+      "bytes": 398,
+      "sha256": "4a65e089f648d10a5956b0b683ebf4198e93bb93d47c16592cf34963aabba5e1"
+    },
+    {
+      "path": "SkillRuntime.Reloaded/SkillRuntime.Reloaded.csproj",
+      "bytes": 1311,
+      "sha256": "2ce9d2bf6ff75e6ff4272d55e5006569dd91269d3b0db65afd5c0c5fc3e23492"
+    },
+    {
+      "path": "SkillRuntime.Reloaded/Startup.cs",
+      "bytes": 1549,
+      "sha256": "d9362939146c3a41f54f546dc069929b2089ed33cc5ab2e943f64ab8844f53e4"
+    },
+    {
+      "path": "SkillRuntime.Tests/Program.cs",
+      "bytes": 20738,
+      "sha256": "e54972e1d776b6322bc334f07061ac365ccfe48606da56bc5492f13ded1d3b9f"
+    },
+    {
+      "path": "SkillRuntime.Tests/SkillRuntime.Tests.csproj",
+      "bytes": 251,
+      "sha256": "0f2539786fa8caf0ede6f385f7431cd826e760ccf8bdc8842aedaa7c05162168"
+    },
+    {
+      "path": "tools/capture_offline_evidence.py",
+      "bytes": 2718,
+      "sha256": "0f0bf09e69df8e621e261bcf54ddf61f7ccbbd71ce5b074e23d4480d5d14ec9a"
+    }
+  ],
+  "build_report": {
+    "path": "artifacts/build-report.json",
+    "bytes": 2544,
+    "sha256": "89043e1a511967e0d78919d7a3dc3888e2969b43316e9b2f915ae8da8c69045a"
+  },
+  "logs": [
+    {
+      "path": "artifacts/build-core-tests.log",
+      "bytes": 418,
+      "sha256": "2b7fe2e010da46f1c6e21aee8b64aaa6cc0c327cddd432fdee6a956dab4e4766"
+    },
+    {
+      "path": "artifacts/build-host-tests.log",
+      "bytes": 605,
+      "sha256": "75c6e5e9e1d086e84cb14be3757add4d30f252c7db1c31fa2897d0f743d54065"
+    },
+    {
+      "path": "artifacts/core-tests.log",
+      "bytes": 1570,
+      "sha256": "f61c2324eeb7bdcd19610b42a9ec040bb606769a79ac4be69ea88e2412ac0a93"
+    },
+    {
+      "path": "artifacts/executable-assessment.log",
+      "bytes": 844,
+      "sha256": "67a7674655ae1f8433732198ebb23c1a202775890a1d9594e191050db2417415"
+    },
+    {
+      "path": "artifacts/host-tests.log",
+      "bytes": 179,
+      "sha256": "26654e6c8e568adde8898e3e0ebde67cfb10445a73075249e48b6447e8efb8f2"
+    },
+    {
+      "path": "artifacts/rejected-interface-build.log",
+      "bytes": 849,
+      "sha256": "d41525c2e814334e684662cfaf369bd126e39d25a2a5cb8fbb66869eb6d895ac"
+    },
+    {
+      "path": "artifacts/restore-core-tests.log",
+      "bytes": 82,
+      "sha256": "2ad9967f2280d0195ad457a92fe6a353a8492625846632386df6dfc446efe4bc"
+    },
+    {
+      "path": "artifacts/restore-host-tests.log",
+      "bytes": 82,
+      "sha256": "2ad9967f2280d0195ad457a92fe6a353a8492625846632386df6dfc446efe4bc"
+    }
+  ],
+  "native_runtime_enabled": false,
+  "live_loader_tested": false,
+  "public_addon_package_includes_runtime": false
+}
