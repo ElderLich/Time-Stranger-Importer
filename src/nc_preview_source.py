@@ -206,13 +206,45 @@ class Glb:
             raise ValueError('Nonfinite glTF animation samples')
         return result
 
+    def node_path(self, index):
+        path = [index]
+        while path[-1] in self.parents:
+            path.append(self.parents[path[-1]])
+        return tuple(reversed(path))
+
     def socket(self, name):
-        candidates = [i for i, n in enumerate(self.doc['nodes']) if n.get('name') == name]
-        animated = [i for i in candidates if any((i, p) in self.channels for p in ('translation', 'rotation', 'scale'))]
-        candidates = animated or candidates
-        if len(candidates) != 1:
-            raise ValueError(f'Ambiguous or missing socket {name!r}: {candidates}')
-        return candidates[0]
+        nodes = self.doc['nodes']
+        paths = [self.node_path(i) for i, node in enumerate(nodes) if node.get('name') == name]
+        if not paths:
+            raise ValueError(f'Missing socket {name!r}')
+        if len(paths) == 1:
+            return paths[0][-1]
+
+        # An NC GLB can include several complete prefab hierarchies. Identify
+        # the ones that drive a skinned mesh in this particular animation.
+        animated = {index for index, _ in self.channels}
+        actor_roots = set()
+        skins = self.doc.get('skins', [])
+        for skin_index in {node['skin'] for node in nodes if 'mesh' in node and 'skin' in node}:
+            _integer(skin_index, 'glTF mesh skin', maximum=len(skins)-1)
+            for joint in skins[skin_index]['joints']:
+                _integer(joint, 'glTF skin joint', maximum=len(nodes)-1)
+                path = self.node_path(joint)
+                if animated.intersection(path):
+                    actor_roots.add(path[0])
+        paths = [path for path in paths if path[0] in actor_roots] or paths
+        # Direct socket keys take precedence in the owning hierarchy. Static
+        # child sockets can also inherit all their motion from a keyed parent.
+        keyed = [path for path in paths if path[-1] in animated]
+        # A common animated ancestor moves every remaining copy equally.
+        shared = set(paths[0]).intersection(*paths[1:])
+        branch_keys = animated - shared
+        inherited = [path for path in paths if branch_keys.intersection(path)]
+        matches = keyed or inherited or paths
+        if len(matches) != 1:
+            descriptions = ['/'.join(f"{nodes[i].get('name', '')}[{i}]" for i in p) for p in matches]
+            raise ValueError(f'Ambiguous socket {name!r}: ' + ', '.join(descriptions))
+        return matches[0][-1]
 
     def sample(self, index, path, time, default):
         channel = self.channels.get((index, path))
@@ -424,6 +456,7 @@ def export_preview(model_dir, phase_entry, output_path, *, overwrite=False):
             samples.append(dict(frame=frame, position=world[:3, 3].round(8).tolist(),
                                 rotation=matrix_quaternion(world[:3, :3]).round(9).tolist(), fov_degrees=camera['fieldOfView']))
         camera_output = dict(coordinate_system='unity-left-handed-y-up', socket=cue['anchor']['name'],
+                             socket_node_index=socket, socket_node_path=list(glb.node_path(socket)),
                              near=camera['nearClip'], far=camera['farClip'], samples=samples)
     result = dict(format='dsts-cinematic-preview-v2', fps=fps, model_code=code, role=catalog['role'],
                   phase_id=phase_entry['id'], phase_kind=phase['kind'], source_phase=phase,

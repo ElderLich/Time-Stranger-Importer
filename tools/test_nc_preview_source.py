@@ -76,6 +76,42 @@ class PhaseSourceTests(unittest.TestCase):
         self.assertEqual(result['effects'][0]['anchor'], {'side': 'target', 'name': 'foot'})
         self.assertEqual(result['audio'][0]['source_key'], 'cast')
 
+    def duplicate_socket_fixture(self, nodes, animated, skins=()):
+        doc = copy.deepcopy(self.doc)
+        doc['nodes'] = nodes
+        doc['skins'] = list(skins)
+        doc['animations'][0]['channels'] = [
+            {'sampler': 0, 'target': {'node': i, 'path': 'translation'}} for i in animated]
+        write_glb(self.glb, doc)
+        return Glb(self.glb, 'cast')
+
+    def test_static_socket_inherits_animation_from_its_parent(self):
+        nodes = [{'name': 'camera anchor'}, {'children': [2]}, {'name': 'camera anchor'}]
+        glb = self.duplicate_socket_fixture(nodes, [1])
+        self.assertEqual(glb.socket('camera anchor'), 2)
+        self.assertEqual(glb.node_path(2), (1, 2))
+        self.assertTrue((glb.world(2, 4.5)[:3, 3] == [1, 2, 3]).all())
+
+    def test_animated_skin_owns_socket_even_when_another_prefab_keys_its_copy(self):
+        nodes = [{'name': 'anchor'}, {'children': [2, 3]}, {'name': 'joint'},
+                 {'name': 'anchor'}, {'mesh': 0, 'skin': 0}]
+        glb = self.duplicate_socket_fixture(nodes, [0, 2], [{'joints': [2]}])
+        self.assertEqual(glb.socket('anchor'), 3)
+
+    def test_equally_animated_sibling_sockets_report_both_paths(self):
+        nodes = [{'name': 'rig', 'children': [1, 2]}, {'name': 'anchor'}, {'name': 'anchor'}]
+        glb = self.duplicate_socket_fixture(nodes, [0])
+        with self.assertRaisesRegex(ValueError, r'Ambiguous socket.*rig\[0\]/anchor\[1\].*rig\[0\]/anchor\[2\]'):
+            glb.socket('anchor')
+        with self.assertRaisesRegex(ValueError, 'Missing socket'):
+            glb.socket('missing')
+
+    def test_actor_root_motion_does_not_mask_keyed_socket_parent(self):
+        nodes = [{'name': 'rig', 'children': [1, 2]}, {'name': 'anchor'},
+                 {'name': 'camera controller', 'children': [3]}, {'name': 'anchor'}]
+        glb = self.duplicate_socket_fixture(nodes, [0, 2])
+        self.assertEqual(glb.socket('anchor'), 3)
+
     def test_existing_output_is_protected(self):
         out = self.root/'cast.json'; out.write_bytes(b'user output')
         with self.assertRaises(FileExistsError):

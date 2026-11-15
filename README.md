@@ -1,5 +1,12 @@
 # Time Stranger Importer
 
+Version 1.5.2 resolves duplicate cinematic camera socket names using the mesh
+skin and the selected clip's animation hierarchy. For Shoutmon X7, open
+**File → Import → Digimon New Century → Skill Phases (.glb)**, select its library `model.glb`, and choose
+**Skill 2 · Fusion Blazing Rocker — Cinematic**. Both the ordinary and triggered
+cinematic entries use the moving camera on `u288_b/root/JT1/JT2`. Use Numpad 0
+in the 3D Viewport to look through the scene camera, then play the timeline.
+
 Version 1.5.1 corrects New Century animation orientation and preserves native
 facial rest scales. See [import and animation corrections](docs/import-animation-fixes.md)
 for reimport instructions and the supported facial preview workflow.

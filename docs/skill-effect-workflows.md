@@ -24,6 +24,12 @@ Scenes**. Ordinary model import still supplies the existing native donor
 workflow and all captured model motions. Choose the scene in Blender's scene
 selector to inspect each imported phase.
 
+For a cinematic, enable **Captured Camera** and press **Numpad 0** in the
+imported scene to look through its animated camera. When several sockets share
+a name, the importer uses the selected clip's skinned actor hierarchy and
+animation on the socket or its ancestors to identify the attachment. If several
+copies still qualify, the import error lists their full hierarchy paths.
+
 Held-pose phases depend on previous actor state. Importing one with **Source
 Actor and Animation** enabled is rejected; disabling that option allows its
 audio/effect records to be inspected without substituting a stand animation.
