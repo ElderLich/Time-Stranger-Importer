@@ -1,5 +1,9 @@
 # Time Stranger Importer
 
+Version 1.5.3 adds **File → Export → Digimon Time Stranger → Native Skill Sequence**.
+Build one native attack from trimmed actor phases, source cinematic and ordinary battle cameras,
+and converted caster effects. [Sequence recipes](docs/native-skill-sequence.md)
+
 Version 1.5.2 resolves duplicate cinematic camera socket names using the mesh
 skin and the selected clip's animation hierarchy. For Shoutmon X7, open
 **File → Import → Digimon New Century → Skill Phases (.glb)**, select its library `model.glb`, and choose

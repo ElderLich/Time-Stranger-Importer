@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 5, 2),
+    "version": (1, 5, 3),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -2957,6 +2957,27 @@ class DSTS_MT_CyberSleuthImport(bpy.types.Menu):
         draw_import_menu(self, context)
 
 
+class DSTS_OT_NativeSkillSequence(Operator, ImportHelper):
+    """Build a native actor motion and optional PC/EM cameras from an ordered JSON phase recipe"""
+    bl_idname = 'export_scene.dsts_native_skill_sequence'
+    bl_label = 'Build Native Skill Sequence'
+    filename_ext = '.json'
+    filter_glob: StringProperty(default='*.json', options={'HIDDEN'})
+    output_directory: StringProperty(name='New Output Folder', subtype='DIR_PATH')
+
+    def execute(self, context):
+        from .src.nc_skill_sequence import export_sequence
+        try:
+            if not self.output_directory:
+                raise ValueError('Select a new output folder')
+            result = export_sequence(bpy.path.abspath(self.filepath), bpy.path.abspath(self.output_directory))
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Built {result['stem']} with {result['frames']} frames")
+        return {'FINISHED'}
+
+
 class DSTS_MT_ExportSubmenu(bpy.types.Menu):
     """Digimon Time Stranger Export Submenu"""
     bl_idname = "DSTS_MT_export_submenu"
@@ -2970,6 +2991,7 @@ class DSTS_MT_ExportSubmenu(bpy.types.Menu):
         layout.operator(DSTS_OT_AnimExport.bl_idname, text="Animation (.anim)")
         layout.operator(DSTS_OT_AnimExportAll.bl_idname, text="All Animations (.anim)")
         layout.operator(DSTS_OT_ExportNcMoveset.bl_idname, text="NC Moveset (.anim)")
+        layout.operator(DSTS_OT_NativeSkillSequence.bl_idname, text="Native Skill Sequence (.json)")
         layout.separator()
         layout.operator(DSTS_OT_PackageNativeModel.bl_idname, text="Package Exported Native Model (.geom)")
         layout.operator('export_scene.dsts_spark', text="Native Effect Graph (.sprk)")
@@ -3016,6 +3038,7 @@ CLASSES = (
     DSTS_OT_AnimExport,
     DSTS_OT_AnimExportAll,
     DSTS_OT_ExportNcMoveset,
+    DSTS_OT_NativeSkillSequence,
     DSTS_OT_ExportAll,
     DSTS_OT_PrepareSelectedAsGeom,
     DSTS_OT_ApplyPoseAsRest,
