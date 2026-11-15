@@ -200,8 +200,8 @@ build, and accepted report snapshots accompany the candidate.
 
 `coverage_complete` only describes source-node representation. Native material
 dependency closure, render/lifecycle parity and game acceptance remain separate
-requirements. The current reference fixture represents 56 of 61 ordinary
-Sevenfold systems and 12 of 13 Triple systems; six exact source systems remain
+requirements. The current reference fixture represents 57 of 61 ordinary
+Sevenfold systems and 12 of 13 Triple systems; five exact source systems remain
 unrepresented across these phases.
 
 ## Publication and tests

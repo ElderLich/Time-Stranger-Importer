@@ -65,6 +65,9 @@ reviewed material carriers and native donors. **Generate and Add Components**
 authors the native particle resources and adds them to the recipe, without
 editing per-skill scripts. See [component generation](docs/finite-producer.md)
 for the required inputs and supported profile.
+The bounded [velocity billboard profile](docs/SKILL_VELOCITY_BILLBOARD_PROFILE.md)
+also preserves fixed source 3D rotation, pivot and hierarchy scaling for reviewed
+additive effects. It is a producer API; the saved local-mesh job does not select it.
 This produces native review assets; complete effect coverage, target routing,
 actor lifecycle and in-game acceptance remain required before installation.
 

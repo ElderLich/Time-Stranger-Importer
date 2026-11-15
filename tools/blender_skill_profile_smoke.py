@@ -27,6 +27,7 @@ for profile, filename, binding in (
         ('mesh_profile', 'test_skill_mesh_profile.py', 'profile'),
         ('billboard_profile', 'test_skill_billboard_profile.py', 'profile'),
         ('view_mesh_profile', 'test_skill_view_mesh_profile.py', 'profile'),
+        ('velocity_billboard_profile', 'test_skill_velocity_billboard_profile.py', 'p'),
         ('finite_producer', 'test_skill_finite_producer.py', 'producer'),
         ('coverage', 'test_skill_coverage.py', 'inspect_coverage')):
     actual = importlib.import_module('Time_Stranger_Importer.src.skill_conversion.' + profile)
@@ -36,7 +37,7 @@ for profile, filename, binding in (
     testspec.loader.exec_module(cases)
     # Test fixtures and independent expected values stay unchanged. All calls
     # under test are rebound to the actual installed implementation, not a copy.
-    implementation = actual if binding in ('profile', 'producer') else getattr(actual, binding)
+    implementation = actual if binding in ('profile', 'producer', 'p') else getattr(actual, binding)
     setattr(cases, binding, implementation)
     assert getattr(cases, binding) is implementation
     suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(cases))
