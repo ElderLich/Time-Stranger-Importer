@@ -156,15 +156,20 @@ def create_recipe(model_path, phase_id, target_chr='', motion_suffix='', donor_b
 
 def validate_native_bindings(value):
     _require(isinstance(value, dict), 'Native bindings must be an object')
-    _require(set(value) == {'caster_basename', 'target_basename', 'hit_frames', 'include_audio',
+    optional = {'target_start_frames', 'target_hit_frames'}
+    _require(set(value) - optional == {'caster_basename', 'target_basename', 'hit_frames', 'include_audio',
                             'sound_template_set', 'stop_audio_on_end'}, 'Unexpected native binding fields')
     for key in ('caster_basename', 'target_basename', 'sound_template_set'):
         _require(isinstance(value[key], str) and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,30}', value[key]),
                  'Invalid native binding ' + key)
     _require(value['caster_basename'].casefold() != value['target_basename'].casefold(), 'Caster and target effect names must differ')
-    frames = value['hit_frames']
-    _require(isinstance(frames, list) and len(frames) <= 8 and all(type(x) is int and 0 < x <= 216000 for x in frames)
-             and frames == sorted(set(frames)), 'Native hit frames must be distinct increasing positive integers')
+    for key in ('hit_frames', 'target_hit_frames', 'target_start_frames'):
+        if key not in value:
+            continue
+        frames = value[key]
+        _require(isinstance(frames, list) and len(frames) <= 8
+                 and all(type(x) is int and 0 <= x <= 216000 for x in frames)
+                 and frames == sorted(set(frames)), f'{key} requires up to eight distinct increasing nonnegative frames')
     _require(type(value['include_audio']) is bool and type(value['stop_audio_on_end']) is bool, 'Native audio choices must be boolean')
     return value
 
@@ -409,6 +414,13 @@ def _collect(recipe):
                         native_options['audio'] = {'cue_id': mapping['cue_id'], 'frame': sound['frame'] - source_event['frame'],
                                                    'stop_on_end': binding['stop_audio_on_end']}
                         native_options['sound_template_set'] = binding['sound_template_set']
+                elif anchor['side'] == 'target':
+                    native_options['hit_frames'] = binding.get('target_hit_frames', [])
+                    starts = binding.get('target_start_frames', [])
+                    if starts:
+                        native_options['figure_start_frames'] = [frame for frame in starts for _ in figures]
+                        figures = figures * len(starts)
+                        duration += starts[-1]
             result, provenance = compose_event(donor_raw, figures, socket=socket, duration_frames=duration,
                          template_set=recipe.get('donor_template_set', {}).get(anchor['side'], 'set1'), **native_options)
             _require(('dsts-loader/patch/' + name).casefold() not in files, 'Generated BSON collides with component resource: ' + name)
@@ -420,6 +432,9 @@ def _collect(recipe):
     if binding is not None and (binding['hit_frames'] or binding['include_audio']):
         if not any(row['source_event']['anchor']['side'] == 'caster' for row in compositions):
             error('native-binding-caster-missing', 'Authored hit frames or source sound require a composed caster event')
+    if binding and (binding.get('target_start_frames') or binding.get('target_hit_frames')):
+        if not any(row['source_event']['anchor']['side'] == 'target' for row in compositions):
+            error('native-binding-target-missing', 'Target timing requires a composed target event')
     if not any(item['manifest']['kind'] == 'actor' for item in components):
         block('actor-missing', 'Native actor animation component is required')
     for sound in source.get('phase', {}).get('source_phase', {}).get('sounds', []):

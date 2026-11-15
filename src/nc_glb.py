@@ -16,9 +16,10 @@ One-click import of an nc-extractor model.glb into an export-ready DSTS scene:
     flags. Object motion is included in those poses, then its curves are removed.
 4.  Re-seat everything in file-consistent space: the glTF importer leaves
     skinned vertices and bone rests in bind/armature space with a non-bind
-    transform on the armature object. We derive the rigid axis rotation M that
+    transform on the armature object. We derive the rigid axis transform M that
     maps the imported bone rests onto the glb inverse-bind-matrix bind worlds
-    (M is rotX(-90) for NC files, but it is fitted and verified numerically),
+    (axis rotation and, for root-relative imports, translation are fitted and
+    verified numerically),
     bake M into mesh vertices and bone rests, and leave identity object
     transforms so the existing .geom exporter works unmodified.
 5.  Borrow materials, per-mesh DSTS flags and Geom-collection metadata from a
@@ -32,12 +33,14 @@ The math anchor points (validated against the chr110 fan port and the shipped
 chr110_bn01.anim):
 
 - TS .anim binds bones by index into the geom bone order and stores deltas vs
-  the geom rest: ``local(t) = rest_local @ T(dp) @ R(dq) @ S(ds)``.
+  the geom rest: ``localT = restT + deltaT`` in parent space,
+  ``localQ = restQ * deltaQ`` and ``localS = restS * deltaS``.
 - Final bone rest (Blender space, identity object transform) = glb IBM bind
   world. Exporting applies rotX(-90), which lands the skeleton in the same
   Y-up file space as the glb node hierarchy.
-- New root bone rest R = the armature object's static world transform with
-  animation cleared (the importer's conversion of the root node's TRS).
+- New root bone rest R comes from the source node's static world transform.
+  It can differ from Blender's armature object basis when the importer has
+  already folded that node's basis into the bone rests.
 - Animation conversion uses ``Bone.convert_local_to_pose(..., invert=True)``
   with each original world matrix and the original animated parent matrix;
   this preserves both root motion and changed child rest bases.
@@ -545,16 +548,22 @@ def _axis_rotation_candidates():
     return candidates
 
 
-def fit_alignment_rotation(source_points, target_points):
-    """Best axis-aligned proper rotation M with M @ source ~= target.
+def fit_alignment_rotation(source_points, target_points, *, allow_translation=False):
+    """Best axis-aligned proper transform M with M @ source ~= target.
 
-    Returns (matrix, max_error). Both dicts are keyed by bone name.
+    Returns (matrix, max_error). Both dicts are keyed by bone name. Imported
+    armature/mesh coordinates may be relative to an offset skeleton root;
+    only that fit admits translation. Source node-axis checks stay origin-based.
     """
     shared = sorted(set(source_points) & set(target_points))
     if not shared:
         return None, float("inf")
     best_matrix, best_error = None, float("inf")
     for candidate in _axis_rotation_candidates():
+        if allow_translation:
+            candidate.translation = sum(
+                (target_points[name] - candidate.to_3x3() @ source_points[name]
+                 for name in shared), Vector((0.0, 0.0, 0.0))) / len(shared)
         error = max(
             ((candidate @ source_points[name].to_4d()).to_3d() - target_points[name]).length
             for name in shared
@@ -584,6 +593,7 @@ def _select_bind_worlds_for_armature(gltf, binary, current_heads):
             _matrix, error = fit_alignment_rotation(
                 current_heads,
                 {name: bind_worlds[name].translation.copy() for name in shared},
+                allow_translation=True,
             )
         else:
             error = float("inf")
@@ -877,11 +887,19 @@ def _bone_depth_groups(armature_obj):
     return depth_groups
 
 
-def _capture_source_world_poses(context, armature_obj, actions, root_name, static_basis):
+def _capture_source_world_poses(context, armature_obj, actions, root_name, static_basis,
+                                root_rest=None):
     """Capture the glTF scene before changing its bind space or parenting."""
     ad = armature_obj.animation_data or armature_obj.animation_data_create()
     previous_frame = context.scene.frame_current
     samples = {}
+    ad.use_nla = False
+    ad.action_influence = 1.0
+    parent_world = armature_obj.parent.matrix_world if armature_obj.parent else Matrix.Identity(4)
+    static_world = parent_world @ armature_obj.matrix_parent_inverse @ static_basis
+    # The added root represents the source node, while Blender's object may
+    # instead be identity because it baked that node into its rest bones.
+    root_offset = static_world.inverted() @ root_rest if root_rest is not None else Matrix.Identity(4)
     for track in ad.nla_tracks:
         track.mute = True
     for action in actions:
@@ -900,7 +918,7 @@ def _capture_source_world_poses(context, armature_obj, actions, root_name, stati
             world = armature_obj.matrix_world.copy()
             poses = {b.name: world @ b.matrix for b in armature_obj.pose.bones}
             if root_name:
-                poses[root_name] = world
+                poses[root_name] = world @ root_offset
             frames[frame] = poses
         samples[action] = (slot, frames)
     ad.action = None
@@ -1516,7 +1534,7 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
             f"Only {len(bind_heads)} of {len(current_heads)} bones have glb bind "
             "matrices; cannot derive the alignment rotation"
         )
-    alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads)
+    alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads, allow_translation=True)
     _log(f"alignment fit over {len(bind_heads)} joints: max head error {fit_error:.6f}")
     if alignment is None or fit_error > _ALIGNMENT_TOLERANCE:
         node_fit_count, node_fit_error = _node_bind_alignment_fit(
@@ -1543,7 +1561,7 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
                 notes.append("No missing root node detected; skeleton imported as-is")
             bind_heads = {name: m.translation.copy() for name, m in bind_worlds.items()
                           if name in current_heads}
-            alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads)
+            alignment, fit_error = fit_alignment_rotation(current_heads, bind_heads, allow_translation=True)
             _log(f"retry alignment fit over {len(bind_heads)} joints: max head error {fit_error:.6f}")
             if alignment is not None and fit_error <= _ALIGNMENT_TOLERANCE:
                 notes.append(
@@ -1552,7 +1570,7 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
                 )
         if alignment is None or fit_error > _ALIGNMENT_TOLERANCE:
             raise NcImportError(
-                f"No axis-aligned rotation maps the imported rest pose onto the glb "
+                f"No rigid axis-aligned transform maps the imported rest pose onto the glb "
                 f"bind pose (best error {fit_error:.6f})"
             )
     elif fit_error > _STRICT_ALIGNMENT_TOLERANCE:
@@ -1620,13 +1638,12 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
     # Preserve source world poses before changing the bind basis or hierarchy.
     parent_world = old_armature.parent.matrix_world.copy() if old_armature.parent else Matrix.Identity(4)
     parent_inverse = old_armature.matrix_parent_inverse.copy()
-    if missing_root:
-        source_static_world = Matrix.Rotation(math.pi / 2, 4, 'X') @ node_worlds[missing_root_index]
-        source_static_basis = (parent_world @ parent_inverse).inverted() @ source_static_world
-    else:
-        source_static_basis = old_armature.matrix_basis.copy()
+    # Blender can bake the missing node's basis into the rest bones already.
+    # Use the independently validated bind alignment, rather than applying
+    # the glTF Y-up conversion a second time to those rigs.
+    source_static_basis = (parent_world @ parent_inverse).inverted() @ alignment
     source_world_poses = _capture_source_world_poses(
-        context, old_armature, imported_actions, missing_root, source_static_basis)
+        context, old_armature, imported_actions, missing_root, source_static_basis, root_rest)
 
     # --- donor materials / flags / metadata ------------------------------
     _log(f"=== Import donor geom: {donor_geom_path}")

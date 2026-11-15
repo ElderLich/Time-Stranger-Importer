@@ -79,6 +79,8 @@ class DSTS_PG_NativeSkill(PropertyGroup):
     caster_basename: StringProperty(name='Caster Effect Name')
     target_basename: StringProperty(name='Target Effect Name')
     hit_frames: StringProperty(name='Native Hit Frames', description='Increasing 30 Hz frame numbers separated by commas; authored as native BSON hit fields')
+    target_start_frames: StringProperty(name='Target Effect Starts', description='Frames from the start of the target phase, separated by commas. Leave blank for a single effect at frame zero')
+    target_hit_frames: StringProperty(name='Target Hit Frames', description='Native hit timings relative to the target phase, in 30 Hz frames')
     include_audio: BoolProperty(name='Bind Source Sound', default=True)
     sound_template_set: StringProperty(name='Sound Template', default='set0')
     stop_audio_on_end: BoolProperty(name='Stop Sound With Effect', default=True)
@@ -176,6 +178,8 @@ def load_recipe(scene, recipe):
     state.caster_basename = binding['caster_basename'] if binding else base
     state.target_basename = binding['target_basename'] if binding else base + '_hit'
     state.hit_frames = ', '.join(str(x) for x in binding['hit_frames']) if binding else ''
+    for key in ('target_start_frames', 'target_hit_frames'):
+        setattr(state, key, ', '.join(map(str, binding.get(key, []))) if binding else '')
     state.include_audio = binding['include_audio'] if binding else True
     state.sound_template_set = binding['sound_template_set'] if binding else 'set0'
     state.stop_audio_on_end = binding['stop_audio_on_end'] if binding else True
@@ -232,6 +236,10 @@ def scene_recipe(scene):
         recipe['native_bindings'] = dict(caster_basename=state.caster_basename.strip(), target_basename=state.target_basename.strip(),
             hit_frames=frames, include_audio=state.include_audio, sound_template_set=state.sound_template_set,
             stop_audio_on_end=state.stop_audio_on_end)
+        for key in ('target_start_frames', 'target_hit_frames'):
+            text = getattr(state, key).strip()
+            if text:
+                recipe['native_bindings'][key] = [int(field.strip()) for field in text.split(',')]
     else:
         recipe.pop('native_bindings', None)
     recipe['cue_mappings'] = [dict(source_key=r.source_key, cue_id=r.cue_id or None,
@@ -601,7 +609,7 @@ class DSTS_PT_NativeSkill(Panel):
         box = layout.box()
         box.prop(state, 'named_bindings')
         if state.named_bindings:
-            for field in ('caster_basename', 'target_basename', 'hit_frames', 'include_audio'):
+            for field in ('caster_basename', 'target_basename', 'hit_frames', 'target_start_frames', 'target_hit_frames', 'include_audio'):
                 box.prop(state, field)
             if state.include_audio:
                 box.prop(state, 'sound_template_set')

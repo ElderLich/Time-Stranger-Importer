@@ -1,5 +1,9 @@
 # Time Stranger Importer
 
+Version 1.5.1 corrects New Century animation orientation and preserves native
+facial rest scales. See [import and animation corrections](docs/import-animation-fixes.md)
+for reimport instructions and the supported facial preview workflow.
+
 Native skill camera dependencies and reusable whole-clip framing are documented
 in [native camera fitting](docs/native-camera-fit.md). Version 1.5.0 preserves
 camera, rig, FOV and NLST bindings when assigning native motion camera assets.
@@ -39,7 +43,7 @@ Python; the included build supports **CPython 3.13**. See
 ## Install
 
 1. Build this checkout with `python tools/package_addon.py` and use
-   `dist/Time_Stranger_Importer.zip`. Version 1.4 is currently a local build;
+   `dist/Time_Stranger_Importer.zip`. Version 1.5 is currently a local build;
    it has not been published to
    [Releases](https://github.com/ElderLich/Time-Stranger-Importer/releases).
 2. In Blender, open **Edit → Preferences → Add-ons → Install from Disk** and

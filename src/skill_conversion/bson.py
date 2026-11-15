@@ -57,7 +57,7 @@ def _neutral_emitter(drawable):
 
 
 def compose_event(template, figures, *, socket, duration_frames, template_set='set1',
-                  hit_frames=(), audio=None, sound_template_set='set0'):
+                  hit_frames=(), audio=None, sound_template_set='set0', figure_start_frames=None):
     """Clone the neutral attached Figure template for one source event.
 
     Only the proven one-Figure emitter profile is accepted. Donor visual
@@ -68,8 +68,8 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
     _require(type(duration_frames) is int and 0 < duration_frames <= 216000,
              'Event duration must be a positive bounded 30 Hz frame count')
     _require(isinstance(hit_frames, (list, tuple)) and len(hit_frames) <= 8 and
-             all(type(frame) is int and 0 < frame <= duration_frames for frame in hit_frames) and
-             list(hit_frames) == sorted(set(hit_frames)), 'Native hit frames must be distinct increasing positive frames within the effect')
+             all(type(frame) is int and 0 <= frame <= duration_frames for frame in hit_frames) and
+             list(hit_frames) == sorted(set(hit_frames)), 'Native hit frames must be distinct increasing nonnegative frames within the effect')
     _require(isinstance(socket, str) and socket and '\0' not in socket,
              'Select a native socket or explicit @root')
     _require(not socket.startswith('@') or socket in ('@root', '@effect'), 'Unknown native attachment origin')
@@ -78,7 +78,15 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
     follow = 0 if socket == '@effect' else 1
     _require(len(native_socket.encode('utf8')) < 32, 'Socket exceeds native 31-byte limit')
     _require(isinstance(figures, list) and 0 < len(figures) <= 4096, 'Expected bounded Figure list')
-    _require(len(set(figures)) == len(figures), 'Duplicate event Figure')
+    explicit_start_frames = figure_start_frames is not None
+    if figure_start_frames is None:
+        _require(len(set(figures)) == len(figures), 'Duplicate event Figure')
+        figure_start_frames = [0] * len(figures)
+    else:
+        _require(isinstance(figure_start_frames, (list, tuple)) and len(figure_start_frames) == len(figures)
+                 and all(type(frame) is int and 0 <= frame < duration_frames for frame in figure_start_frames),
+                 'Each Figure needs a nonnegative native start frame within the effect')
+        _require(len(set(zip(figures, figure_start_frames))) == len(figures), 'Duplicate Figure at the same native start frame')
     for figure in figures:
         _require(isinstance(figure, str) and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,30}', figure),
                  'Invalid Figure basename')
@@ -137,7 +145,7 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
                 if not re.fullmatch(r'set\d+', donor._text(node.key))]
     for order, figure in enumerate(figures):
         patch((template_set, 'common', 'id'), f'nc_{order:04d}')
-        patch((template_set, 'common', 'so'), 0)
+        patch((template_set, 'common', 'so'), figure_start_frames[order])
         patch((template_set, 'common', 'bt', 'bt_id'), owner)
         for field in ('bt_pos', 'bt_rot', 'bt_sca'):
             patch((template_set, 'common', 'bt', field), native_socket)
@@ -161,6 +169,8 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
              'Attachment composition readback differs')
     _require([parsed.value(('hf', f'hf{i}')) for i in range(8)] == list(hit_frames) + [0] * (8 - len(hit_frames)),
              'Native hit-frame readback differs')
+    _require([parsed.value((effect_set.name, 'common', 'so')) for effect_set in parsed.sets] == list(figure_start_frames),
+             'Native Figure start-frame readback differs')
     if audio is not None:
         _require(parsed.sets[0].sound_name == str(audio['cue_id']) and parsed.sets[0].sound_start_frame == audio['frame'],
                  'Native sound binding readback differs')
@@ -169,4 +179,5 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
                            'figures': figures, 'socket': socket, 'duration_frames': duration_frames,
                            'event_dispatch': 'external route required; local clock starts at zero',
                            'hit_routing': 'native BSON hit fields' if hit_frames else 'not authored; zeroed event-local hit table',
-                           'hit_frames': list(hit_frames), 'audio': audio}
+                           'hit_frames': list(hit_frames), 'audio': audio,
+                           **({'figure_start_frames': list(figure_start_frames)} if explicit_start_frames else {})}

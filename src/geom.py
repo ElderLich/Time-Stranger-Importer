@@ -5,6 +5,7 @@ import base64
 import glob
 import math
 import zlib
+import json
 from .. import data
 from pathlib import Path
 from mathutils import Matrix
@@ -68,11 +69,18 @@ def _ensure_export_transforms_are_baked(collection):
         )
 
     posed_bones = []
+    from .native_rest_scale import expected_basis, validate_preview_layer, MARKER
+    native_rest_rigs = False
     for obj in collection.objects:
         if obj.type != "ARMATURE" or not obj.pose:
             continue
+        if MARKER in obj:
+            native_rest_rigs = True
+            validate_preview_layer(obj)
         for pose_bone in obj.pose.bones:
-            if not _matrix_is_identity(pose_bone.matrix_basis):
+            expected = expected_basis(obj, pose_bone)
+            if max(abs(pose_bone.matrix_basis[r][c] - expected[r][c])
+                   for r in range(4) for c in range(4)) > 1e-5:
                 posed_bones.append((obj, pose_bone))
 
     if posed_bones:
@@ -82,6 +90,11 @@ def _ensure_export_transforms_are_baked(collection):
         )
         if len(posed_bones) > 12:
             details += f"\n- ... and {len(posed_bones) - 12} more posed bone(s)"
+        rest_advice = (
+            'Mute native motion clips and clear the active Action while keeping the Native rest scale track enabled. '
+            'Its authored facial scale is part of the original geometry and must not be cleared with Alt+S. '
+            if native_rest_rigs else
+            'To export the original rest pose instead, clear the pose with Alt+G, Alt+R, and Alt+S. ')
         raise RuntimeError(
             "Export cancelled: the export armature has pose-mode transforms. "
             "The .geom exporter writes the armature rest pose and local mesh data, "
@@ -89,7 +102,7 @@ def _ensure_export_transforms_are_baked(collection):
             f"{details}\n\n"
             "To export the visible pose, select the armature, enter Pose Mode, and use "
             "Pose > Apply > Apply Pose as Rest Pose, then verify the mesh and animations. "
-            "To export the original rest pose instead, clear the pose with Alt+G, Alt+R, and Alt+S. "
+            + rest_advice +
             "Ctrl+A and Smart Apply Scale only fix object transforms; they do not bake pose bones."
         )
 
@@ -169,6 +182,11 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
             armature_obj = skeleton_result
             bone_name_map = {}
 
+        from .native_rest_scale import apply_profile
+        rest_scale_profile = apply_profile(geom, armature_obj, bone_name_map)
+        if rest_scale_profile:
+            new_collection['DSTS_native_rest_scale_note'] = rest_scale_profile['note']
+
         from .native_camera import preserve_camera_source
         is_camera = preserve_camera_source(new_collection, armature_obj, filepath, allow_mixed=True)
         if geom.lights or (include_scene_records and geom.cameras):
@@ -180,12 +198,17 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
         new_collection["DSTS_texture_search_dirs"] = "\n".join(texture_search_dirs)
 
         blender_materials = {}
-        for mat_data in geom.materials:
+        new_collection['DSTS_source_materials'] = json.dumps([
+            {'name': mat.name, 'hash': int(mat.name_hash)} for mat in geom.materials])
+        for material_index, mat_data in enumerate(geom.materials):
             source_name_hash = int(mat_data.name_hash)
+            source_name = mat_data.name
             mat = bpy.data.materials.new(name=mat_data.name)
             mat_data.name = mat.name
             material.resolve_material(new_collection, mat, mat_data, texture_search_dirs)
             mat['DSTS_source_name_hash'] = str(source_name_hash)
+            mat['DSTS_source_material_index'] = material_index
+            mat['DSTS_source_material_name'] = source_name
             blender_materials[mat_data.name] = mat
 
         for mesh_obj in geom.meshes:
@@ -210,6 +233,13 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
                     at.count, at.offset, at.atype, at.dtype = attr.values()
 
         error_list = dsts_formats.get_error_list()
+        if error_list:
+            new_collection['DSTS_backend_diagnostics'] = '\n'.join(error_list)
+        from .native_rest_scale import partition_diagnostics
+        handled, error_list = partition_diagnostics(error_list, rest_scale_profile)
+        if handled:
+            new_collection['DSTS_handled_bind_rest_notes'] = '\n'.join(handled)
+            print(f'[DSTS] Preserved authored facial rest scale for {len(handled)} bind/rest differences; details retained on collection.')
         error_list = [e for e in error_list if not (is_camera and "camera data" in e.lower())]
         if error_list:
             new_collection['DSTS_import_warnings'] = '\n'.join(error_list)
@@ -308,7 +338,9 @@ def export_geom(collection):
             raise ValueError('Native camera GEOM export supports only its original rig; remove added objects/collections')
         return PreservedCameraGeom(collection, armatures[0], geom.skeleton)
 
-    name_to_mat = {}
+    object_to_mat = {}
+    name_to_sources = {}
+    source_materials = json.loads(collection.get('DSTS_source_materials', '[]'))
     meshes = [o for o in collection.objects if o.type == "MESH"]
     materials = []
     for obj in meshes:
@@ -318,21 +350,28 @@ def export_geom(collection):
         if mat not in materials:
             materials.append(mat)
     material_hash_map = {}
+    materials.sort(key=lambda mat: int(mat.get('DSTS_source_material_index', len(source_materials))))
     for mat in materials:
         mat_data = material.export_material(mat)
         mat_data.name = re.sub(r"(\.[0-9]{3})?$", "", mat_data.name)
-        if mat_data.name in name_to_mat:
+        index = mat.get('DSTS_source_material_index', -1)
+        source_identity = (int(index) if isinstance(index, int) and 0 <= index < len(source_materials)
+                           and source_materials[index]['name'] == mat_data.name
+                           and mat.get('DSTS_source_material_name') == mat_data.name
+                           and str(source_materials[index]['hash']) == mat.get('DSTS_source_name_hash') else None)
+        previous = name_to_sources.setdefault(mat_data.name, [])
+        if previous and (source_identity is None or None in previous or source_identity in previous):
             raise ValueError(f"Materials resolve to the same native name '{mat_data.name}'; rename split materials before export")
+        previous.append(source_identity)
         geom.materials.append(mat_data)
-        name_to_mat[mat_data.name] = mat_data
+        object_to_mat[mat] = mat_data
         if 'DSTS_source_name_hash' in mat:
             material_hash_map.setdefault(int(mat['DSTS_source_name_hash']), set()).add(
                 zlib.crc32(mat_data.name.encode('utf-8')) ^ 0xFFFFFFFF)
 
     for obj in [o for o in collection.objects if o.type == "MESH"]:
         mesh_out = mesh.export_mesh_object(obj, geom.skeleton)
-        mat_name = re.sub(r"(\.[0-9]{3})?$", "", obj.data.materials[0].name)
-        mesh_out.material = name_to_mat[mat_name]
+        mesh_out.material = object_to_mat[obj.data.materials[0]]
         geom.meshes.append(mesh_out)
 
     for channel in getattr(geom.skeleton, 'float_channels', []):

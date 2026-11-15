@@ -19,7 +19,7 @@ from .src.animation import single_strip, animation_path, validate_strip
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John, Nymic_Razor, Pherakki (Animation), Zeak",
-    "version": (1, 5, 0),
+    "version": (1, 5, 1),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
@@ -1566,6 +1566,9 @@ class DSTS_OT_AnimExportAll(Operator):
         exported_count = 0
         failed_count = 0
         for nla_track in armature_obj.animation_data.nla_tracks:
+            from .src.native_rest_scale import is_rest_track
+            if is_rest_track(nla_track):
+                continue
             if self.skip_muted and nla_track.mute:
                 continue
             if not nla_track.strips:
@@ -1945,6 +1948,9 @@ def export_all_collection(collection, filepath, export_textures_as_png=False):
         armature_obj = armatures[0]
         if armature_obj.animation_data and armature_obj.animation_data.nla_tracks:
             for nla_track in armature_obj.animation_data.nla_tracks:
+                from .src.native_rest_scale import is_rest_track
+                if is_rest_track(nla_track):
+                    continue
                 if not nla_track.strips:
                     continue
                 try:

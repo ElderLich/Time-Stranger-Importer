@@ -1,4 +1,5 @@
-"""Run with blender --background --factory-startup --python tools/blender_smoke.py."""
+"""Run in Blender; optionally select an installed --addon-root after ``--``."""
+import argparse
 import importlib.util
 import json
 import math
@@ -8,7 +9,13 @@ import tempfile
 
 import bpy
 
-ROOT = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--addon-root', type=Path, default=Path(__file__).resolve().parents[1])
+parser.add_argument('--workspace-root', type=Path, default=Path(__file__).resolve().parents[2])
+parser.add_argument('--nc-export', action='store_true')
+args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
+ROOT = args.addon_root.resolve()
+WORKSPACE = args.workspace_root.resolve()
 spec = importlib.util.spec_from_file_location("Time_Stranger_Importer", ROOT / "__init__.py",
                                             submodule_search_locations=[str(ROOT)])
 addon = importlib.util.module_from_spec(spec)
@@ -341,7 +348,7 @@ if native_path.exists():
     assert len(out.indices) == 6
     print("PASS native chr050 geometry import/export and UV seam / non-bone weight regression")
 
-float_path = ROOT.parent / 'Time Stranger/local/leviamon-native/dsts-loader/patch/n147_p0492.geom'
+float_path = WORKSPACE / 'Time Stranger/local/leviamon-native/dsts-loader/patch/n147_p0492.geom'
 if float_path.exists():
     backend = load_format_modules()[0]
     assert hasattr(backend, 'FloatChannel'), 'Native material animation needs the updated backend'
@@ -479,7 +486,7 @@ matrix = camera_transform([1, 2, 3], [0, 0, 0, 1])
 assert (matrix.translation - Vector((-1, -3, 2))).length < 1e-6
 assert ((matrix.to_3x3() @ Vector((0, 0, -1))) - Vector((0, -1, 0))).length < 1e-6
 assert abs(matrix.to_3x3().determinant() - 1) < 1e-6
-manifest = ROOT.parent / 'Time Stranger/local/leviamon-x/skill2.cinematic.json'
+manifest = WORKSPACE / 'Time Stranger/local/leviamon-x/skill2.cinematic.json'
 if manifest.exists():
     scene = import_preview(bpy.context, str(manifest))
     assert scene.camera is not None
@@ -494,7 +501,7 @@ if manifest.exists():
     assert all(math.isfinite(v) for v in scene.camera.matrix_world.translation)
     print('PASS real Leviamon X cinematic actor/camera preview', scene.frame_end)
 
-if '--nc-export' in sys.argv:
+if args.nc_export:
     from Time_Stranger_Importer.src.nc_glb import import_nc_model
     glb = Path(r'D:\Digimon Modding\Digimon Library\New Century\Digimon_Library\LeviamonX_x147\model\model.glb')
     unused = bpy.data.meshes.new('User unlinked mesh - must survive')

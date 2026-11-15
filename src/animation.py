@@ -45,8 +45,11 @@ def _write_curve(action, owner, path, index, values, group):
 
 
 def build_action(owner, name, source, bone_names=None):
+    from .native_rest_scale import MARKER
     before = set(bpy.data.actions)
     ad = owner.animation_data or owner.animation_data_create()
+    if MARKER in owner:
+        ad.action_blend_type = 'COMBINE'
     previous_action, previous_slot = ad.action, getattr(ad, 'action_slot', None)
     previous_properties = set(owner.keys())
     previous_floats = {key: owner[key] for key in owner.keys() if key.startswith('DSTS_float_')}
@@ -147,6 +150,9 @@ def source_rate_from_strip(strip, scene):
 
 def build_from_action(owner, action, playback_rate=30.0, slot=None, frame_range=None):
     """Sample complete vectors, including unkeyed components and Euler curves."""
+    from .native_rest_scale import is_rest_action
+    if is_rest_action(action):
+        raise ValueError('Native rest scale is geometry preview metadata, not a native animation')
     from .cyber_sleuth import is_cyber_sleuth, reject_export
     if is_cyber_sleuth(owner) or is_cyber_sleuth(action):
         reject_export(owner)

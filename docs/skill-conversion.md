@@ -222,6 +222,13 @@ or rename removes only the compiler-owned temporary directory. The verified
 publication platform is Windows; the POSIX rename guard is cooperative, not an
 interprocess lock.
 
+In named native bindings, **Target Effect Starts** repeats the target Figures
+at the entered 30 Hz offsets in the target phase. Each copy retains its
+authored lifespan. **Target Hit Frames** sets the target BSON hit timings.
+For example, entering `0, 15, 25` in both fields aligns three impacts to the
+same three target-phase starts. The ordinary skill table must bind the effect
+to the matching native phase. Timing choices are saved with the recipe.
+
 Run `python -m unittest discover -s tests -p test_skill_conversion.py -v`.
 Run `python -m unittest discover -s tests -p test_skill_coverage.py -v` for
 source coverage, same-asset ownership separation, producer provenance,
