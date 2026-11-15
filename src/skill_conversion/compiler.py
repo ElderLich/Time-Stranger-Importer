@@ -96,6 +96,8 @@ def _source_snapshot(model_path, phase_id, role=None):
     nc_preview_source._validate_phase(phase['source_phase'])
     model, library = Path(catalog['model_dir']), Path(catalog['library'])
     files = {str(model / 'model/model.glb'), str(library / 'MANIFEST/skill_timelines.json')}
+    if catalog.get('presentation_overlay'):
+        files.add(catalog['presentation_overlay'])
     if (model / 'info.json').is_file():
         files.add(str(model / 'info.json'))
     effects, missing = [], []

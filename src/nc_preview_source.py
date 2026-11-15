@@ -309,6 +309,20 @@ def _model_dir(path):
     return path
 
 
+def _read_timelines(timeline):
+    raw = timeline.read_bytes()
+    data = json.loads(raw)
+    overlay = timeline.with_name('skill_presentations.json')
+    changed = {}
+    if overlay.is_file():
+        additions = json.loads(overlay.read_bytes())
+        if additions.get('format') == 'nc-skill-presentations-v1' and additions.get('baseline_sha256') == hashlib.sha256(raw).hexdigest():
+            changed = additions['roles']
+            for role, skills in changed.items():
+                data[role]['equippedSkills'] = skills
+    return data, changed
+
+
 def catalog_model(model_dir, role=None):
     """Return stable source phase choices for one extracted model, without guessing clips.
 
@@ -318,7 +332,7 @@ def catalog_model(model_dir, role=None):
     model = _model_dir(model_dir)
     library = model.parent.parent
     timeline = library/'MANIFEST/skill_timelines.json'
-    data = json.loads(timeline.read_text(encoding='utf8'))
+    data, changed = _read_timelines(timeline)
     info_path = model/'info.json'
     info = json.loads(info_path.read_text(encoding='utf8')) if info_path.is_file() else {}
     code = info.get('code') or model.name.rsplit('_', 1)[-1]
@@ -349,6 +363,7 @@ def catalog_model(model_dir, role=None):
                                phase_kind=kind, actor_clip=clip, role=selected, model_code=code,
                                source_phase=copy.deepcopy(phase)))
     return dict(format='nc-skill-catalog-v1', model_dir=str(model), actor_path=str(model/'model/model.glb'),
+                **({'presentation_overlay': str(timeline.with_name('skill_presentations.json'))} if selected in changed else {}),
                 library=str(library), model_code=code, role=selected, available_roles=available, phases=phases)
 
 
@@ -420,6 +435,8 @@ def export_preview(model_dir, phase_entry, output_path, *, overwrite=False):
     if not isinstance(delay, int) or delay < 0:
         raise ValueError('Actor delay must be a nonnegative source frame count')
     sources = {timeline, glb_path}
+    if catalog.get('presentation_overlay'):
+        sources.add(Path(catalog['presentation_overlay']))
     relative = lambda path: _reference_path(path, output.parent)
     effects, candidates, unresolved = [], [], []
     horizon = max(1, actor_frames+delay, phase.get('totalFrames', 0), phase.get('previewFrames', 0))
@@ -515,7 +532,8 @@ def export_preview(model_dir, phase_entry, output_path, *, overwrite=False):
 def export(library, role, slot, output):
     library, output = Path(library).resolve(), Path(output).resolve()
     timeline_path = library/'MANIFEST/skill_timelines.json'
-    role_data = json.loads(timeline_path.read_text('utf8'))[str(role)]
+    timelines, changed = _read_timelines(timeline_path)
+    role_data = timelines[str(role)]
     code = role_data['code']
     model_dirs = [p for p in (library/'Digimon_Library').iterdir() if p.name.lower().endswith('_'+code.lower())]
     if len(model_dirs) != 1:
@@ -531,6 +549,8 @@ def export(library, role, slot, output):
     glb_path = model/'model/model.glb'
     glb = Glb(glb_path, phase['actorClip'])
     sources = {timeline_path, glb_path}
+    if str(role) in changed:
+        sources.add(timeline_path.with_name('skill_presentations.json'))
     camera_candidates, effects = [], []
     relative = lambda p: _reference_path(p, output.parent)
     for cue in phase['events']:

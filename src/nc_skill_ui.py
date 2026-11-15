@@ -8,7 +8,7 @@ import tempfile
 import bpy
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import Operator, Panel
-from bpy_extras.io_utils import ImportHelper
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import nc_preview_source
 from .cinematic import import_preview
@@ -19,15 +19,16 @@ _NAMES = json.loads((Path(__file__).parent / 'nc_skill_names.json').read_text(en
 
 
 @lru_cache(maxsize=8)
-def _cached_catalog(model_dir, mtime, size):
+def _cached_catalog(model_dir, stamps):
     return nc_preview_source.catalog_model(model_dir)
 
 
 def catalog(filepath):
     model = nc_preview_source._model_dir(filepath)
     source = model.parent.parent / 'MANIFEST' / 'skill_timelines.json'
-    stat = source.stat()
-    return _cached_catalog(str(model), stat.st_mtime_ns, stat.st_size)
+    stamps = tuple((p.stat().st_mtime_ns, p.stat().st_size)
+                   for p in (source, source.with_name('skill_presentations.json')) if p.is_file())
+    return _cached_catalog(str(model), stamps)
 
 
 def phase_label(phase):
@@ -158,6 +159,38 @@ class DSTS_OT_NcSkillImport(Operator, ImportHelper):
         return {'FINISHED'}
 
 
+class DSTS_OT_SavePhaseManifest(Operator, ExportHelper):
+    """Save the selected captured phase with paths relative to the chosen file"""
+    bl_idname = 'export_scene.dsts_nc_phase_manifest'
+    bl_label = 'Save Phase Manifest'
+    filename_ext = '.json'
+    filter_glob: StringProperty(default='*.json', options={'HIDDEN'})
+
+    @classmethod
+    def poll(cls, context):
+        scene = context.scene
+        return bool(scene.get('DSTS_preview_source_model') and scene.get('DSTS_preview_phase_id'))
+
+    def invoke(self, context, event):
+        phase_id = context.scene['DSTS_preview_phase_id'].replace(':', '-')
+        self.filepath = f'phase-{phase_id}.json'
+        return ExportHelper.invoke(self, context, event)
+
+    def execute(self, context):
+        try:
+            scene = context.scene
+            data = catalog(scene['DSTS_preview_source_model'])
+            phase = next((p for p in data['phases'] if p['id'] == scene['DSTS_preview_phase_id']), None)
+            if phase is None:
+                raise ValueError('Select the phase again from the current source catalog')
+            nc_preview_source.export_preview(data['model_dir'], phase, Path(self.filepath))
+        except (OSError, ValueError, KeyError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, 'Saved captured phase and its source references')
+        return {'FINISHED'}
+
+
 class DSTS_PT_NcSkill(Panel):
     bl_idname = 'DSTS_PT_nc_skill'
     bl_label = 'New Century Skills'
@@ -169,6 +202,8 @@ class DSTS_PT_NcSkill(Panel):
         layout, scene = self.layout, context.scene
         layout.prop(scene, 'dsts_nc_model_path', text='Source Model')
         layout.operator(DSTS_OT_NcSkillImport.bl_idname, icon='IMPORT')
+        if DSTS_OT_SavePhaseManifest.poll(context):
+            layout.operator(DSTS_OT_SavePhaseManifest.bl_idname, icon='EXPORT')
         if scene.get('DSTS_preview_actor_clip'):
             layout.label(text=f'Clip: {scene["DSTS_preview_actor_clip"]}')
             layout.label(text=f'Phase: {scene.get("DSTS_preview_kind", "showcase")}')
@@ -178,7 +213,7 @@ class DSTS_PT_NcSkill(Panel):
                 layout.label(text='After motion: captured stand/idle reset.')
 
 
-CLASSES = (DSTS_OT_NcSkillImport, DSTS_PT_NcSkill)
+CLASSES = (DSTS_OT_NcSkillImport, DSTS_OT_SavePhaseManifest, DSTS_PT_NcSkill)
 
 
 def register():
