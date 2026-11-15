@@ -31,6 +31,7 @@ for profile, filename, binding in (
         ('sampled_particle_profile', 'test_skill_sampled_particle_profile.py', 'profile'),
         ('dissolve_profile', 'test_skill_dissolve_profile.py', 'profile'),
         ('mixed_owner_profile', 'test_skill_mixed_owner_profile.py', 'profile'),
+        ('camera_assets', 'test_skill_camera_assets.py', 'camera'),
         ('reviewed_actor', 'test_skill_reviewed_actor.py', 'actor'),
         ('finite_producer', 'test_skill_finite_producer.py', 'producer'),
         ('coverage', 'test_skill_coverage.py', 'inspect_coverage')):
@@ -41,7 +42,7 @@ for profile, filename, binding in (
     testspec.loader.exec_module(cases)
     # Test fixtures and independent expected values stay unchanged. All calls
     # under test are rebound to the actual installed implementation, not a copy.
-    implementation = actual if binding in ('profile', 'producer', 'p', 'actor') else getattr(actual, binding)
+    implementation = actual if binding in ('profile', 'producer', 'p', 'actor', 'camera') else getattr(actual, binding)
     setattr(cases, binding, implementation)
     assert getattr(cases, binding) is implementation
     suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(cases))

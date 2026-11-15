@@ -1,5 +1,9 @@
 # Time Stranger Importer
 
+Native skill camera dependencies and reusable whole-clip framing are documented
+in [native camera fitting](docs/native-camera-fit.md). Version 1.5.0 preserves
+camera, rig, FOV and NLST bindings when assigning native motion camera assets.
+
 **Bring Digimon into Blender. Keep the game data intact.**
 
 A Blender **5.x** add-on for *Digimon Story: Time Stranger* models and animations,
