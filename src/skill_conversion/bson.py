@@ -56,7 +56,8 @@ def _neutral_emitter(drawable):
             'ec': {'ec_count': 1, 'ec_random': 0}}
 
 
-def compose_event(template, figures, *, socket, duration_frames, template_set='set1'):
+def compose_event(template, figures, *, socket, duration_frames, template_set='set1',
+                  hit_frames=(), audio=None, sound_template_set='set0'):
     """Clone the neutral attached Figure template for one source event.
 
     Only the proven one-Figure emitter profile is accepted. Donor visual
@@ -66,9 +67,15 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
     """
     _require(type(duration_frames) is int and 0 < duration_frames <= 216000,
              'Event duration must be a positive bounded 30 Hz frame count')
+    _require(isinstance(hit_frames, (list, tuple)) and len(hit_frames) <= 8 and
+             all(type(frame) is int and 0 < frame <= duration_frames for frame in hit_frames) and
+             list(hit_frames) == sorted(set(hit_frames)), 'Native hit frames must be distinct increasing positive frames within the effect')
     _require(isinstance(socket, str) and socket and '\0' not in socket,
              'Select a native socket or explicit @root')
-    native_socket = '' if socket == '@root' else socket
+    _require(not socket.startswith('@') or socket in ('@root', '@effect'), 'Unknown native attachment origin')
+    native_socket = '' if socket in ('@root', '@effect') else socket
+    owner = '' if socket == '@effect' else 'CompositeModel'
+    follow = 0 if socket == '@effect' else 1
     _require(len(native_socket.encode('utf8')) < 32, 'Socket exceeds native 31-byte limit')
     _require(isinstance(figures, list) and 0 < len(figures) <= 4096, 'Expected bounded Figure list')
     _require(len(set(figures)) == len(figures), 'Duplicate event Figure')
@@ -100,7 +107,27 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
     _require(set(bt) == {'bt_pos', 'bt_sca', 'bt_rot', 'bt_id'}, 'Unsupported donor socket record')
     donor.set_field(('mf',), duration_frames)
     for i in range(8):
-        donor.set_field(('hf', f'hf{i}'), 0)
+        donor.set_field(('hf', f'hf{i}'), hit_frames[i] if i < len(hit_frames) else 0)
+
+    sound_raw = None
+    if audio is not None:
+        _require(isinstance(audio, dict) and set(audio) == {'cue_id', 'frame', 'stop_on_end'},
+                 'Audio binding requires cue_id, frame and stop_on_end')
+        _require(type(audio['cue_id']) is int and 0 < audio['cue_id'] <= 2147483647 and
+                 type(audio['frame']) is int and 0 <= audio['frame'] <= duration_frames and
+                 type(audio['stop_on_end']) is bool, 'Invalid native sound binding')
+        sound_path = (sound_template_set, 'common', 'se')
+        sound = donor._get(sound_path)
+        values = {'se_name': str(audio['cue_id']), 'se_offset': audio['frame'],
+                  'se_stop': int(audio['stop_on_end']), 'se_fadeout': 0,
+                  'se_volume': 1.0, 'se_stream': 1, 'se_3D': 0}
+        original_sound = _plain(donor, sound)
+        extra = set(original_sound) - set(values)
+        _require(set(values) <= set(original_sound) and extra <= {'se_3D_range', 'se_3D_max_volume_range'}
+                 and all(original_sound[key] == 0.0 for key in extra), 'Unsupported donor sound schema')
+        for name, value in values.items():
+            donor.set_field(sound_path + (name,), value)
+        sound_raw = bytes(donor._prefix[sound.start:sound.end])
 
     def patch(path, value):
         node = donor._get(path)
@@ -111,14 +138,17 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
     for order, figure in enumerate(figures):
         patch((template_set, 'common', 'id'), f'nc_{order:04d}')
         patch((template_set, 'common', 'so'), 0)
-        patch((template_set, 'common', 'bt', 'bt_id'), 'CompositeModel')
+        patch((template_set, 'common', 'bt', 'bt_id'), owner)
         for field in ('bt_pos', 'bt_rot', 'bt_sca'):
             patch((template_set, 'common', 'bt', field), native_socket)
         for field in ('ca_pos', 'ca_rot', 'ca_sca', 'ca_ref'):
-            patch((template_set, 'common', 'ca', field), 1)
+            patch((template_set, 'common', 'ca', field), follow)
         donor.set_field((template_set, 'common', 'emitter0', 'dn'), figure)
-        common_raw = _object(common.key, [bytes(donor._prefix[node.start:node.end])
-                             for node in common.children if donor._text(node.key) in retained])
+        fields = [bytes(donor._prefix[node.start:node.end])
+                  for node in common.children if donor._text(node.key) in retained]
+        if order == 0 and sound_raw is not None:
+            fields.append(sound_raw)
+        common_raw = _object(common.key, fields)
         children.append(_object(donor._intern(f'set{order}'), [common_raw]))
     root = _object(donor._root.key, children)
     high, low = divmod(len(donor._pool), 65535)
@@ -126,11 +156,17 @@ def compose_event(template, figures, *, socket, duration_frames, template_set='s
     result = HEADER + root + struct.pack('<BBH', 0x20, high, low) + donor._pool + END
     parsed = EffectDocument.from_bytes(result)
     _require([s.drawables for s in parsed.sets] == [(figure,) for figure in figures], 'Figure composition readback differs')
-    _require(all(s.attachment_owner == 'CompositeModel' and s.position_socket == native_socket
+    _require(all(s.attachment_owner == owner and s.position_socket == native_socket
                  and s.rotation_socket == native_socket and s.scale_socket == native_socket for s in parsed.sets),
              'Attachment composition readback differs')
+    _require([parsed.value(('hf', f'hf{i}')) for i in range(8)] == list(hit_frames) + [0] * (8 - len(hit_frames)),
+             'Native hit-frame readback differs')
+    if audio is not None:
+        _require(parsed.sets[0].sound_name == str(audio['cue_id']) and parsed.sets[0].sound_start_frame == audio['frame'],
+                 'Native sound binding readback differs')
     return bytes(result), {'profile': 'neutral-attached-figure-event-v1', 'template_set': template_set,
                            'omitted_donor_common_fields': sorted(set(keys) - retained),
                            'figures': figures, 'socket': socket, 'duration_frames': duration_frames,
                            'event_dispatch': 'external route required; local clock starts at zero',
-                           'hit_routing': 'not authored; zeroed event-local hit table'}
+                           'hit_routing': 'native BSON hit fields' if hit_frames else 'not authored; zeroed event-local hit table',
+                           'hit_frames': list(hit_frames), 'audio': audio}

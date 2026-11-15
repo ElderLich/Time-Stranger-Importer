@@ -28,6 +28,10 @@ for profile, filename, binding in (
         ('billboard_profile', 'test_skill_billboard_profile.py', 'profile'),
         ('view_mesh_profile', 'test_skill_view_mesh_profile.py', 'profile'),
         ('velocity_billboard_profile', 'test_skill_velocity_billboard_profile.py', 'p'),
+        ('sampled_particle_profile', 'test_skill_sampled_particle_profile.py', 'profile'),
+        ('dissolve_profile', 'test_skill_dissolve_profile.py', 'profile'),
+        ('mixed_owner_profile', 'test_skill_mixed_owner_profile.py', 'profile'),
+        ('reviewed_actor', 'test_skill_reviewed_actor.py', 'actor'),
         ('finite_producer', 'test_skill_finite_producer.py', 'producer'),
         ('coverage', 'test_skill_coverage.py', 'inspect_coverage')):
     actual = importlib.import_module('Time_Stranger_Importer.src.skill_conversion.' + profile)
@@ -37,12 +41,24 @@ for profile, filename, binding in (
     testspec.loader.exec_module(cases)
     # Test fixtures and independent expected values stay unchanged. All calls
     # under test are rebound to the actual installed implementation, not a copy.
-    implementation = actual if binding in ('profile', 'producer', 'p') else getattr(actual, binding)
+    implementation = actual if binding in ('profile', 'producer', 'p', 'actor') else getattr(actual, binding)
     setattr(cases, binding, implementation)
     assert getattr(cases, binding) is implementation
     suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(cases))
     records.append({'module': profile, 'path': str(Path(actual.__file__).resolve()),
                     'sha256': hashlib.sha256(Path(actual.__file__).read_bytes()).hexdigest()})
+# Exercise native bindings against the installed compiler and BSON writer too.
+sys.path.insert(0, str(test_root))
+cases = importlib.import_module('test_skill_native_bindings')
+for module_name, names in (('bson', ('compose_event',)),
+                           ('compiler', ('inspect_recipe', 'validate_native_bindings'))):
+    actual = importlib.import_module('Time_Stranger_Importer.src.skill_conversion.' + module_name)
+    assert Path(actual.__file__).resolve().is_relative_to(root)
+    for name in names:
+        setattr(cases, name, getattr(actual, name))
+    records.append({'module': module_name, 'path': str(Path(actual.__file__).resolve()),
+                    'sha256': hashlib.sha256(Path(actual.__file__).read_bytes()).hexdigest()})
+suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(cases))
 result = unittest.TextTestRunner(verbosity=1).run(suite)
 report = {'blender': bpy.app.version_string, 'addon_root': str(root),
           'version': list(addon.bl_info['version']), 'modules': records,

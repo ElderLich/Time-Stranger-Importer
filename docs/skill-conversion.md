@@ -17,11 +17,14 @@ review are saved in the .blend. Preview imports the captured actor, audio and
 effect references into a separate scene, including idle reset; those
 references are not a complete rendered-particle preview.
 
+This workflow is an asset port. The game supplies battle execution; no custom
+runtime, observer, movement or cleanup controller is required or generated.
+
 This milestone produces actual native component resources and bounded BSON
 event roots. It is not a complete playable skill or an installable mod. It does
 not edit DigiTS Helper or an installed game. Sevenfold's ordinary Cast and
-Triple's full attack still require missing source systems, lifecycle, native
-hit routing and game acceptance. A skill includes actor motion, particles,
+Triple's full attack still require a reviewed native package and game acceptance.
+A skill includes actor motion, particles,
 materials, sockets, audio and tables; it is not one SPRK/BSON conversion.
 
 ## Pure Python API
@@ -168,7 +171,7 @@ unconverted source coverage remains an explicit blocker.
 Event-local time starts at zero. Captured dispatch frame/order and target side
 remain in the composition report. No caster/target aliases, hit timing or
 concatenated actor clips are invented. The event root's hit table is zeroed;
-native skill/per-hit scheduling must be implemented separately. This explains
+native skill/per-hit scheduling is authored separately through the game's asset bindings. This explains
 why valid BSON can be produced while the candidate remains non-installable.
 
 ## Exact source-system coverage
@@ -200,9 +203,11 @@ build, and accepted report snapshots accompany the candidate.
 
 `coverage_complete` only describes source-node representation. Native material
 dependency closure, render/lifecycle parity and game acceptance remain separate
-requirements. The current reference fixture represents 57 of 61 ordinary
-Sevenfold systems and 12 of 13 Triple systems; five exact source systems remain
-unrepresented across these phases.
+requirements. The current reference represents 61 of 61 ordinary Sevenfold
+systems and 13 of 13 Triple systems. Three Sevenfold systems use the explicit
+stationary-root/yaw profile; moving-root equivalence is not claimed. Source
+engine and native rendering limitations remain in each component's provenance.
+See [native bindings and audited animation reuse](native-skill-bindings.md).
 
 ## Publication and tests
 

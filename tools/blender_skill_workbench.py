@@ -57,7 +57,7 @@ for path in args.recipes:
                     'candidate': state.output, 'producer_job_pin': state.producer_job_pin_json,
                     'producer_output': state.producer_output})
     scene['DSTS_skill_review_only'] = True
-    scene['DSTS_skill_review_note'] = 'Native review assets; target routing and full gameplay acceptance remain incomplete.'
+    scene['DSTS_skill_review_note'] = 'Actor/audio and source-reference preview; native effect rendering requires in-game visual acceptance.'
 
 bpy.context.window.scene = bpy.data.scenes[records[0]['scene']]
 bpy.data.scenes.remove(start_scene)

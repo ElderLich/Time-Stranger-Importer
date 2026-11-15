@@ -19,7 +19,7 @@ from skill_conversion import create_recipe, inspect_recipe, build_candidate, pin
 from skill_conversion.bson import compose_event
 
 
-def bson_fixture():
+def bson_fixture(with_audio=False):
     pool = bytearray(b'\0')
     indices = {'': 0}
 
@@ -56,6 +56,9 @@ def bson_fixture():
     common = {'id': 'donor', 'ca': {'ca_ref': 1, 'ca_sca': 1, 'ca_rot': 1, 'ca_pos': 1, 'ca_frame': -1},
               'so': 0, 'bt': {'bt_id': 'donor_owner', 'bt_pos': 'old_socket', 'bt_rot': '', 'bt_sca': ''},
               'emitter0': emitter, 'movie': {'movie_name': 'omit_donor_movie', 'movie_offset': 1}}
+    if with_audio:
+        common['se'] = {'se_name': 'old_audio', 'se_offset': 1, 'se_stop': 0, 'se_fadeout': 3,
+                        'se_volume': .5, 'se_stream': 0, 'se_3D': 1, 'se_3D_range': 0.0, 'se_3D_max_volume_range': 0.0}
     root = encode('', {'mf': 100, 'hf': {f'hf{i}': i for i in range(8)}, 'bs': 0.0, 'sg': 0,
                        'set1': {'common': common}})
     return b'BSON\x0a\0\0\0' + root + struct.pack('<BBH', 0x20, 0, len(pool)) + pool + END

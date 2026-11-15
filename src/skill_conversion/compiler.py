@@ -154,6 +154,21 @@ def create_recipe(model_path, phase_id, target_chr='', motion_suffix='', donor_b
             'components': []}
 
 
+def validate_native_bindings(value):
+    _require(isinstance(value, dict), 'Native bindings must be an object')
+    _require(set(value) == {'caster_basename', 'target_basename', 'hit_frames', 'include_audio',
+                            'sound_template_set', 'stop_audio_on_end'}, 'Unexpected native binding fields')
+    for key in ('caster_basename', 'target_basename', 'sound_template_set'):
+        _require(isinstance(value[key], str) and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,30}', value[key]),
+                 'Invalid native binding ' + key)
+    _require(value['caster_basename'].casefold() != value['target_basename'].casefold(), 'Caster and target effect names must differ')
+    frames = value['hit_frames']
+    _require(isinstance(frames, list) and len(frames) <= 8 and all(type(x) is int and 0 < x <= 216000 for x in frames)
+             and frames == sorted(set(frames)), 'Native hit frames must be distinct increasing positive integers')
+    _require(type(value['include_audio']) is bool and type(value['stop_audio_on_end']) is bool, 'Native audio choices must be boolean')
+    return value
+
+
 def _collect(recipe):
     """Validate and resolve a plan in memory, with no output mutations."""
     _require(isinstance(recipe, dict) and recipe.get('format') == RECIPE_FORMAT, 'Unsupported skill recipe format')
@@ -176,6 +191,12 @@ def _collect(recipe):
         error('source-stale', exc)
     blockers.extend(source.get('missing', []))
     target = recipe.get('target', {})
+    binding = None
+    if recipe.get('native_bindings') is not None:
+        try:
+            binding = validate_native_bindings(recipe['native_bindings'])
+        except (ValueError, TypeError, KeyError) as exc:
+            error('native-binding', exc)
     for name in ('model_stem', 'motion_suffix'):
         value = target.get(name)
         if not value:
@@ -289,9 +310,9 @@ def _collect(recipe):
                              for key in ('model_stem', 'motion_suffix')), 'Actor component must identify its native model and motion')
                 expected_motion = native['model_stem'] + '_' + native['motion_suffix'] + '.anim'
                 _require(expected_motion.casefold() in destinations, 'Actor component is missing its named motion')
-                block('actor-lifecycle-review', 'Actor samples/fragments require complete source lifecycle and dynamic placement acceptance', component=identity)
+                block('actor-binding-review', 'Native motion slot and animation appearance require package review and in-game acceptance', component=identity)
                 if native['model_stem'] != target.get('model_stem') or native['motion_suffix'] != target.get('motion_suffix'):
-                    block('actor-fragment', 'Actor component does not provide the selected complete native motion', component=identity)
+                    block('actor-fragment', 'Actor component does not provide the selected native motion slot', component=identity)
             elif component['kind'] == 'audio':
                 native = component.get('native', {})
                 _require(all(type(native.get(key)) is int and 0 < native[key] <= 2147483647 for key in ('cue_id', 'raw_cue')),
@@ -347,7 +368,10 @@ def _collect(recipe):
         if not socket:
             block('socket-missing', f'Map {anchor["side"]} socket {anchor["name"]}', event_order=order)
             continue
-        if socket != '@root':
+        if any(c.get('profiles', {}).get('ownership') == 'stationary-root-yaw-v1' for c in selected) and socket != '@root':
+            error('owner-profile-binding', 'Stationary-root visual assets require the explicit native actor root binding')
+            continue
+        if socket not in ('@root', '@effect'):
             inventory_pin = target.get('socket_inventory', {}).get(anchor['side'])
             if inventory_pin:
                 try:
@@ -366,17 +390,38 @@ def _collect(recipe):
             _, donor_raw = _check_pin(donor_pin)
             figures = [c['native']['figure_stem'] for c in sorted(selected, key=lambda c: c['source']['node_index'])]
             duration = max(c['sampling']['duration_frames'] for c in selected)
-            result, provenance = compose_event(donor_raw, figures, socket=socket, duration_frames=duration,
-                         template_set=recipe.get('donor_template_set', {}).get(anchor['side'], 'set1'))
+            native_options = {}
             name = f'nc_{anchor["side"]}_event_{order:04d}.bson'
+            if binding is not None:
+                name = binding[anchor['side'] + '_basename'] + '.bson'
+                _require('patch/' + name not in generated, 'Named native bindings support one event per owner; use separate recipes for additional events')
+                if anchor['side'] == 'caster':
+                    native_options['hit_frames'] = binding['hit_frames']
+                    if binding['include_audio']:
+                        sounds = source['phase']['source_phase'].get('sounds', [])
+                        _require(len(sounds) == 1, 'Named native audio currently requires one captured sound event')
+                        sound = sounds[0]
+                        mappings = [row for row in recipe.get('cue_mappings', []) if row['source_key'] == sound['key']]
+                        _require(len(mappings) == 1, 'Choose the captured sound cue mapping')
+                        mapping = mappings[0]
+                        _require(any(item['manifest']['kind'] == 'audio' and item['manifest']['id'] == mapping['component']
+                                     for item in components), 'Named sound binding requires its converted audio component')
+                        native_options['audio'] = {'cue_id': mapping['cue_id'], 'frame': sound['frame'] - source_event['frame'],
+                                                   'stop_on_end': binding['stop_audio_on_end']}
+                        native_options['sound_template_set'] = binding['sound_template_set']
+            result, provenance = compose_event(donor_raw, figures, socket=socket, duration_frames=duration,
+                         template_set=recipe.get('donor_template_set', {}).get(anchor['side'], 'set1'), **native_options)
             _require(('dsts-loader/patch/' + name).casefold() not in files, 'Generated BSON collides with component resource: ' + name)
             generated['patch/' + name] = result
             compositions.append({'path': name, 'event_order': order, 'source_event': source_event,
                                  'donor': donor_pin, 'provenance': provenance, 'sha256': _sha(result), 'bytes': len(result)})
         except (OSError, ValueError, KeyError, TypeError) as exc:
             error('bson-template', exc)
+    if binding is not None and (binding['hit_frames'] or binding['include_audio']):
+        if not any(row['source_event']['anchor']['side'] == 'caster' for row in compositions):
+            error('native-binding-caster-missing', 'Authored hit frames or source sound require a composed caster event')
     if not any(item['manifest']['kind'] == 'actor' for item in components):
-        block('actor-missing', 'Native actor motion/lifecycle component is required')
+        block('actor-missing', 'Native actor animation component is required')
     for sound in source.get('phase', {}).get('source_phase', {}).get('sounds', []):
         matches = [row for row in recipe.get('cue_mappings', []) if row.get('source_key') == sound['key']]
         if len(matches) != 1 or type(matches[0].get('cue_id')) is not int or not 0 < matches[0]['cue_id'] <= 2147483647:
@@ -386,13 +431,13 @@ def _collect(recipe):
         audio_id = matches[0].get('component') if len(matches) == 1 else None
         if not audio_id or not any(item['manifest']['id'] == audio_id and item['manifest']['kind'] == 'audio' for item in components):
             block('audio-component-missing', 'Select a converted audio component for ' + sound['key'])
-    block('native-routing', 'Native skill rows, per-hit target routing, root placement and cleanup require implementation and review')
+    block('native-routing', 'Native skill rows, caster/target asset bindings and authored effect timing require package review')
     block('game-acceptance', 'Normal/accelerated speed, repeat/abort and arbitrary-target game acceptance remain required')
     if not components:
         block('components-missing', 'Select hash-pinned converted component manifests')
     report = {'format': 'nc-native-skill-inspection-v1', 'source': copy.deepcopy(source),
               'effects': copy.deepcopy(source.get('effects', [])),
-              'requirements': ['actor motion/lifecycle', 'all source effect systems', 'caster/target socket owners',
+              'requirements': ['actor animation assets', 'all source effect systems', 'caster/target socket owners',
                                'BSON event scheduling', 'source audio and cue banks', 'native table routes',
                                'complete dependency closure', 'game acceptance'],
               'errors': errors, 'blockers': blockers, 'coverage': coverage, 'installable': False,

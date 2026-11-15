@@ -26,7 +26,8 @@ with a New Century model-conversion workflow and cinematic preview tools.
 | Cyber Sleuth PC model | Dedicated GEOM/NAME/SKEL/base ANIM reader, textures, matching clips and optional camera guides | Native export explicitly unsupported; see [Cyber Sleuth workflow](docs/cyber-sleuth.md) |
 | Exported native model package | Existing `.geom` + base `.anim` + `.nlst` | Validated new package with local shaders/textures and a dependency manifest |
 
-**Tested:** Windows x64, Blender **5.1.2** and **5.3.0**. The add-on targets the
+**Current verification target:** Windows x64, Blender **5.3.0**. Earlier milestones
+also passed **5.1.2**; that installation has since been removed. The add-on targets the
 5.x API family. Native geometry needs a backend matching Blender's embedded
 Python; the included build supports **CPython 3.13**. See
 [compatibility details](docs/architecture.md#blender-5x-compatibility).
@@ -68,8 +69,15 @@ for the required inputs and supported profile.
 The bounded [velocity billboard profile](docs/SKILL_VELOCITY_BILLBOARD_PROFILE.md)
 also preserves fixed source 3D rotation, pivot and hierarchy scaling for reviewed
 additive effects. It is a producer API; the saved local-mesh job does not select it.
-This produces native review assets; complete effect coverage, target routing,
-actor lifecycle and in-game acceptance remain required before installation.
+**Use Audited Actor Motion** reuses an already verified native animation in the
+selected motion slot, preserving every animation byte. **Author Native Effect
+Bindings** writes named caster/target effects, native hit frames and the mapped
+source sound. **Native Hit Origin** retains the game's normal target locator.
+These choices survive save/reopen; see [native asset bindings](docs/native-skill-bindings.md).
+The source-sampled billboard, layered dissolve and stationary-root profiles
+finish finite representation of the current reference's 74 source systems.
+The stationary-root profile explicitly excludes moving roots. These are asset
+conversions; game execution stays native and in-game appearance needs testing.
 
 ### Edit a Time Stranger model
 

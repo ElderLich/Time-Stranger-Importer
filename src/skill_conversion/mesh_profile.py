@@ -14,6 +14,15 @@ import math
 PROFILE = "local-mesh-current-owner-world-offset-v1"
 WORLD_OFFSET_UNIFORM = 178
 
+
+def _stationary_profile():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location('mesh_stationary_root_profile', Path(__file__).with_name('mixed_owner_profile.py'))
+    mixed = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mixed)
+    return mixed
+
 # The original effect donor's output register order, UV convention and projected
 # coordinate equation are retained. The only position addition is the separate
 # world vector, after the native three-row palette multiplication.
@@ -60,14 +69,19 @@ def _vector(value, length, field):
     return value
 
 
-def validate_local_mesh(node):
+def validate_local_mesh(node, *, ownership_profile=None):
     """Reject every owner/render geometry contract outside this finite profile."""
     ps = node.get("ps", {})
     renderer = node.get("renderer", {})
     if ps.get("renderMode") != "Mesh" or renderer.get("alignment") != 2:
         raise ValueError("Only local-aligned source meshes are supported")
     space = ps.get("dynamics", {}).get("simulationSpace")
-    if type(space) is not int or space != 0:
+    if ownership_profile is not None:
+        mixed = _stationary_profile()
+        if ownership_profile != mixed.PROFILE:
+            raise ValueError('Unknown mesh ownership profile')
+        mixed.validate_node(node)
+    elif type(space) is not int or space != 0:
         raise ValueError("World-birth meshes require separate current-owner orientation and frozen-owner position")
     _vector(renderer.get("pivot", [0, 0, 0]), 3, "mesh pivot")
     if any(renderer.get("flip", [])) or ps.get("dynamics", {}).get("trail"):
@@ -92,22 +106,24 @@ def validate_local_mesh(node):
     return PROFILE
 
 
-def vertex_source(node):
+def vertex_source(node, *, ownership_profile=None):
     """Specialize the admitted source atlas dimensions without changing timing."""
-    validate_local_mesh(node)
+    validate_local_mesh(node, ownership_profile=ownership_profile)
     ps = node["ps"]
     return (VERTEX_HLSL.replace("NC_COLUMNS", str(ps.get("tilesX", 1)))
             .replace("NC_ROWS", str(ps.get("tilesY", 1))))
 
 
-def prepare_local_mesh_samples(node, particle):
+def prepare_local_mesh_samples(node, particle, *, ownership_profile=None):
     """Return a deep copy with owner-relative positions and separate world offsets.
 
     Sizes and quaternions already include the source prefab basis. Their native
     ZYX Euler samples are retained, not replaced with billboard dimensions.
     Every sample must be an integer 30 Hz frame in a contiguous interval.
     """
-    validate_local_mesh(node)
+    validate_local_mesh(node, ownership_profile=ownership_profile)
+    if ownership_profile is not None:
+        _stationary_profile().validate_samples(node, particle)
     if particle.get("renderMode") != "Mesh" or particle.get("alignment") != 2:
         raise ValueError("Particle geometry differs from its source profile")
     samples = particle.get("samples")

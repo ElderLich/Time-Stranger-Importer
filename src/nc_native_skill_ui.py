@@ -36,11 +36,22 @@ def phase_items(self, context):
     return items
 
 
+def _root_selected(self, context):
+    if self.native_root:
+        self.native_effect_origin = False
+
+
+def _effect_origin_selected(self, context):
+    if self.native_effect_origin:
+        self.native_root = False
+
+
 class DSTS_PG_SkillSocket(PropertyGroup):
     side: EnumProperty(name='Owner', items=[('caster', 'Caster', 'Caster-owned effect'),
                                           ('target', 'Target', 'Separate target-owned effect')])
     source_socket: StringProperty(name='Source Socket')
-    native_root: BoolProperty(name='Native Actor Root', description='Use this owner\'s actor root instead of a named bone')
+    native_root: BoolProperty(name='Native Actor Root', description='Use this owner\'s actor root instead of a named bone', update=_root_selected)
+    native_effect_origin: BoolProperty(name='Native Hit Origin', description='Use the effect origin supplied by the native battle-effect row, including its target hit locator', update=_effect_origin_selected)
     native_socket: StringProperty(name='Native Socket', description='Explicit native socket; blank remains unresolved')
 
 
@@ -64,6 +75,13 @@ class DSTS_PG_NativeSkill(PropertyGroup):
     animation_selector: IntProperty(name='Motion Selector', min=0, description='Zero leaves native routing unresolved')
     primary_effect_id: IntProperty(name='Caster Effect ID', min=0)
     target_effect_id: IntProperty(name='Target Effect ID', min=0)
+    named_bindings: BoolProperty(name='Author Native Effect Bindings', description='Write named caster/target BSON assets with explicit native hit frames and the mapped source sound')
+    caster_basename: StringProperty(name='Caster Effect Name')
+    target_basename: StringProperty(name='Target Effect Name')
+    hit_frames: StringProperty(name='Native Hit Frames', description='Increasing 30 Hz frame numbers separated by commas; authored as native BSON hit fields')
+    include_audio: BoolProperty(name='Bind Source Sound', default=True)
+    sound_template_set: StringProperty(name='Sound Template', default='set0')
+    stop_audio_on_end: BoolProperty(name='Stop Sound With Effect', default=True)
     caster_donor: StringProperty(name='Caster BSON Donor', subtype='FILE_PATH')
     target_donor: StringProperty(name='Target BSON Donor', subtype='FILE_PATH')
     caster_template_set: StringProperty(name='Caster Figure Template', default='set1',
@@ -135,6 +153,10 @@ def load_recipe(scene, recipe):
     for pin in recipe.get('components', []):
         if not isinstance(pin.get('path'), str):
             raise ValueError('Expected a pinned component manifest')
+    binding = recipe.get('native_bindings')
+    if binding is not None:
+        from .skill_conversion.compiler import validate_native_bindings
+        validate_native_bindings(binding)
     recipe['donor_bson'] = donors
     recipe['donor_template_set'] = templates
     target['socket_inventory'] = target.get('socket_inventory') or {}
@@ -149,6 +171,14 @@ def load_recipe(scene, recipe):
         setattr(state, field, target.get(field) or '')
     for field in ('animation_selector', 'primary_effect_id', 'target_effect_id'):
         setattr(state, field, target.get(field) or 0)
+    state.named_bindings = binding is not None
+    base = 'ef_b_' + (target.get('model_stem') or '') + '_' + (target.get('motion_suffix') or '')
+    state.caster_basename = binding['caster_basename'] if binding else base
+    state.target_basename = binding['target_basename'] if binding else base + '_hit'
+    state.hit_frames = ', '.join(str(x) for x in binding['hit_frames']) if binding else ''
+    state.include_audio = binding['include_audio'] if binding else True
+    state.sound_template_set = binding['sound_template_set'] if binding else 'set0'
+    state.stop_audio_on_end = binding['stop_audio_on_end'] if binding else True
     for side in ('caster', 'target'):
         setattr(state, side + '_donor', (donors.get(side) or {}).get('path', ''))
         setattr(state, side + '_template_set', templates.get(side, 'set1'))
@@ -158,7 +188,8 @@ def load_recipe(scene, recipe):
         item = state.sockets.add()
         item.side, item.source_socket = row['side'], row['source_socket']
         item.native_root = row.get('native_socket') == '@root'
-        item.native_socket = '' if item.native_root else row.get('native_socket') or ''
+        item.native_effect_origin = row.get('native_socket') == '@effect'
+        item.native_socket = '' if item.native_root or item.native_effect_origin else row.get('native_socket') or ''
     state.cues.clear()
     for row in recipe.get('cue_mappings', []):
         item = state.cues.add()
@@ -194,7 +225,15 @@ def scene_recipe(scene):
         old = inventory.get(side)
         inventory[side] = (old if old and _path(old['path']) == path else compiler.pin_file(path)) if path else None
     recipe['socket_mappings'] = [dict(side=r.side, source_socket=r.source_socket,
-                                    native_socket='@root' if r.native_root else r.native_socket) for r in state.sockets]
+                                    native_socket='@root' if r.native_root else '@effect' if r.native_effect_origin else r.native_socket) for r in state.sockets]
+    if state.named_bindings:
+        fields = [field.strip() for field in state.hit_frames.split(',')]
+        frames = [] if not state.hit_frames.strip() else [int(field) for field in fields]
+        recipe['native_bindings'] = dict(caster_basename=state.caster_basename.strip(), target_basename=state.target_basename.strip(),
+            hit_frames=frames, include_audio=state.include_audio, sound_template_set=state.sound_template_set,
+            stop_audio_on_end=state.stop_audio_on_end)
+    else:
+        recipe.pop('native_bindings', None)
     recipe['cue_mappings'] = [dict(source_key=r.source_key, cue_id=r.cue_id or None,
                                  component=r.component) for r in state.cues]
     recipe['components'] = []
@@ -304,29 +343,70 @@ def producer_job(scene):
     if compiler.pin_file(pin['path']) != pin:
         raise ValueError('Component job changed; load it again before inspecting')
     job = json.loads(state.producer_job_json)
-    if job != json.loads(Path(pin['path']).read_text(encoding='utf-8')):
+    from .skill_conversion.reviewed_actor import JOB_FORMAT, create_actor_job
+    if job.get('format') == JOB_FORMAT and pin == job.get('audit'):
+        if job != create_actor_job(scene_recipe(scene), pin['path']):
+            raise ValueError('Actor mapping changed; choose its motion audit again')
+    elif job != json.loads(Path(pin['path']).read_text(encoding='utf-8')):
         raise ValueError('Saved component job differs from its pinned file; load it again')
     if job.get('source') != scene_recipe(scene)['source']:
         raise ValueError('Component job source differs from this scene recipe')
+    if job.get('format') == JOB_FORMAT:
+        target = scene_recipe(scene)['target']
+        if job.get('target') != {key: target.get(key) for key in ('model_stem', 'motion_suffix')}:
+            raise ValueError('Actor mapping changed; choose its motion audit again')
     return job
 
 
-class DSTS_OT_NativeSkillProducerLoad(Operator, ImportHelper):
-    bl_idname = 'import_scene.dsts_native_skill_producer_job'
-    bl_label = 'Load Component Job'
-    bl_description = 'Choose a reviewed source bake and material-carrier job for generating native local-mesh components'
+def _producer_api(job):
+    from .skill_conversion.reviewed_actor import JOB_FORMAT, inspect_actor_job, produce_actor_component
+    if job.get('format') == JOB_FORMAT:
+        return inspect_actor_job, produce_actor_component
+    from .skill_conversion.finite_producer import inspect_finite_job, produce_finite_components
+    return inspect_finite_job, produce_finite_components
+
+
+class DSTS_OT_NativeSkillActorAudit(Operator, ImportHelper):
+    bl_idname = 'import_scene.dsts_native_skill_actor_audit'
+    bl_label = 'Use Audited Actor Motion'
+    bl_description = 'Reuse a source-verified native animation for this captured clip and the chosen native motion slot'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.json'
     filter_glob: StringProperty(default='*.json', options={'HIDDEN'})
 
     def execute(self, context):
         try:
-            from .skill_conversion.finite_producer import inspect_finite_job
+            from .skill_conversion.reviewed_actor import create_actor_job, inspect_actor_job
+            job = create_actor_job(scene_recipe(context.scene), _path(self.filepath))
+            report = inspect_actor_job(job)
+            if not report['buildable']:
+                raise ValueError('; '.join(row['message'] for row in report['errors']))
+            state = context.scene.dsts_native_skill
+            state.producer_job_json, state.producer_job_pin_json = _json(job), _json(job['audit'])
+            state.producer_report_json = _json(report)
+            state.producer_result_json = state.producer_output = ''
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        self.report({'INFO'}, 'Audited actor motion selected; choose a new components folder')
+        return {'FINISHED'}
+
+
+class DSTS_OT_NativeSkillProducerLoad(Operator, ImportHelper):
+    bl_idname = 'import_scene.dsts_native_skill_producer_job'
+    bl_label = 'Load Component Job'
+    bl_description = 'Choose a saved reviewed mesh or actor job for generating native asset components'
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = '.json'
+    filter_glob: StringProperty(default='*.json', options={'HIDDEN'})
+
+    def execute(self, context):
+        try:
             pin = compiler.pin_file(_path(self.filepath))
             job = json.loads(Path(pin['path']).read_text(encoding='utf-8'))
             if job.get('source') != scene_recipe(context.scene)['source']:
                 raise ValueError('Choose a component job for this scene\'s captured source phase')
-            report = inspect_finite_job(job)
+            report = _producer_api(job)[0](job)
             state = context.scene.dsts_native_skill
             state.producer_job_json, state.producer_job_pin_json = _json(job), _json(pin)
             state.producer_report_json = _json(report)
@@ -341,13 +421,13 @@ class DSTS_OT_NativeSkillProducerLoad(Operator, ImportHelper):
 class DSTS_OT_NativeSkillProducerInspect(Operator):
     bl_idname = 'dsts.native_skill_producer_inspect'
     bl_label = 'Inspect Component Job'
-    bl_description = 'Recheck the saved source bake, material carriers, donor pins and selected mesh profiles before generation'
+    bl_description = 'Recheck the saved component job, source evidence and native asset pins before generation'
 
     def execute(self, context):
         state = context.scene.dsts_native_skill
         try:
-            from .skill_conversion.finite_producer import inspect_finite_job
-            report = inspect_finite_job(producer_job(context.scene))
+            job = producer_job(context.scene)
+            report = _producer_api(job)[0](job)
             state.producer_report_json = _json(report)
         except Exception as exc:
             state.producer_report_json = ''
@@ -360,12 +440,11 @@ class DSTS_OT_NativeSkillProducerInspect(Operator):
 class DSTS_OT_NativeSkillProduce(Operator):
     bl_idname = 'export_scene.dsts_native_skill_components'
     bl_label = 'Generate and Add Components'
-    bl_description = 'Generate reviewed local-mesh native resources in a new folder and add their pinned manifests to this recipe'
+    bl_description = 'Generate reviewed native asset components in a new folder and add their pinned manifests to this recipe'
 
     def execute(self, context):
         state = context.scene.dsts_native_skill
         try:
-            from .skill_conversion.finite_producer import produce_finite_components
             job = producer_job(context.scene)
             if not state.producer_report_json:
                 raise ValueError('Inspect the component job before generating')
@@ -375,16 +454,18 @@ class DSTS_OT_NativeSkillProduce(Operator):
             if not state.producer_output:
                 raise ValueError('Choose a new components folder')
             recipe = scene_recipe(context.scene)
-            selected = set(job['node_indices'])
+            selected = set(job.get('node_indices', []))
             for pin in recipe['components']:
                 if compiler.pin_file(pin['path']) != pin:
                     raise ValueError('An existing recipe component changed; inspect the recipe first')
                 component = json.loads(Path(pin['path']).read_text(encoding='utf-8'))
                 source = component.get('source', {})
-                if (component.get('kind') == 'effect' and source.get('event_order') == job['event_order']
+                if inspection.get('kind') == 'actor' and component.get('kind') == 'actor':
+                    raise ValueError('Remove the existing actor component before generating its replacement')
+                if (selected and component.get('kind') == 'effect' and source.get('event_order') == job['event_order']
                         and source.get('node_index') in selected):
                     raise ValueError('Remove the selected nodes\' existing components before generating replacements')
-            result = produce_finite_components(job, _path(state.producer_output),
+            result = _producer_api(job)[1](job, _path(state.producer_output),
                                                 expected_plan_sha256=inspection['plan_sha256'])
             proposed = copy.deepcopy(recipe)
             proposed['components'].extend(result['components'])
@@ -517,6 +598,14 @@ class DSTS_PT_NativeSkill(Panel):
                       'caster_donor', 'caster_template_set', 'target_donor', 'target_template_set',
                       'caster_socket_inventory', 'target_socket_inventory'):
             layout.prop(state, field)
+        box = layout.box()
+        box.prop(state, 'named_bindings')
+        if state.named_bindings:
+            for field in ('caster_basename', 'target_basename', 'hit_frames', 'include_audio'):
+                box.prop(state, field)
+            if state.include_audio:
+                box.prop(state, 'sound_template_set')
+                box.prop(state, 'stop_audio_on_end')
         if state.sockets:
             box = layout.box()
             box.label(text='Socket mappings')
@@ -524,7 +613,9 @@ class DSTS_PT_NativeSkill(Panel):
                 box.label(text=f'{item.side.title()}: {item.source_socket}')
                 box.prop(item, 'native_root')
                 if not item.native_root:
-                    box.prop(item, 'native_socket')
+                    box.prop(item, 'native_effect_origin')
+                    if not item.native_effect_origin:
+                        box.prop(item, 'native_socket')
         if state.cues:
             box = layout.box()
             box.label(text='Sound mappings')
@@ -541,12 +632,16 @@ class DSTS_PT_NativeSkill(Panel):
         box.operator(DSTS_OT_NativeSkillComponent.bl_idname, icon='ADD')
         box = layout.box()
         box.label(text='Generate from reviewed source inputs')
+        box.operator(DSTS_OT_NativeSkillActorAudit.bl_idname, icon='ARMATURE_DATA')
         box.operator(DSTS_OT_NativeSkillProducerLoad.bl_idname, icon='FILE_FOLDER')
         if state.producer_job_json:
             box.operator(DSTS_OT_NativeSkillProducerInspect.bl_idname, icon='VIEWZOOM')
             if state.producer_report_json:
                 producer = json.loads(state.producer_report_json)
-                box.label(text=f"Selected source nodes: {len(producer.get('selected_nodes', []))}")
+                if producer.get('kind') == 'actor':
+                    box.label(text=producer.get('source_clip', '') + ' → ' + producer.get('destination_motion', ''))
+                else:
+                    box.label(text=f"Selected source nodes: {len(producer.get('selected_nodes', []))}")
                 for message in producer.get('errors', [])[:4]:
                     for line in textwrap.wrap(str(message['message']), width=48):
                         box.label(text=line, icon='ERROR')
@@ -576,7 +671,7 @@ class DSTS_PT_NativeSkill(Panel):
 
 CLASSES = (DSTS_PG_SkillSocket, DSTS_PG_SkillCue, DSTS_PG_SkillComponent, DSTS_PG_NativeSkill,
            DSTS_OT_NativeSkillCreate, DSTS_OT_NativeSkillLoad, DSTS_OT_NativeSkillComponent,
-           DSTS_OT_NativeSkillProducerLoad, DSTS_OT_NativeSkillProducerInspect, DSTS_OT_NativeSkillProduce,
+           DSTS_OT_NativeSkillActorAudit, DSTS_OT_NativeSkillProducerLoad, DSTS_OT_NativeSkillProducerInspect, DSTS_OT_NativeSkillProduce,
            DSTS_OT_NativeSkillRemove, DSTS_OT_NativeSkillInspect, DSTS_OT_NativeSkillReport,
            DSTS_OT_NativeSkillPreview, DSTS_OT_NativeSkillBuild, DSTS_PT_NativeSkill)
 

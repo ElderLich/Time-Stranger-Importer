@@ -64,7 +64,7 @@ def hashes(root):
     return result
 
 
-def sync(zip_path, blender_root, versions, apply=False):
+def sync(zip_path, blender_root, versions, apply=False, *, allow_new=False):
     zip_path, blender_root = Path(zip_path).resolve(), Path(blender_root).resolve()
     files = read_package(zip_path)
     expected = {name: digest(data) for name, data in files.items()}
@@ -74,14 +74,16 @@ def sync(zip_path, blender_root, versions, apply=False):
             raise ValueError(f"Unverified Blender version: {version}")
         scripts = blender_root / version / "scripts"
         target = scripts / "addons" / PACKAGE
-        if not target.is_dir():
+        if not target.exists() and not allow_new:
             raise FileNotFoundError(f"Existing add-on installation required: {target}")
+        if target.exists() and not target.is_dir():
+            raise ValueError(f"Add-on destination is not a directory: {target}")
         if target.is_symlink() or target.resolve() != target:
             raise ValueError(f"Refusing redirected add-on folder: {target}")
-        before = hashes(target)
-        plans.append({"version": version, "target": str(target), "before": before,
-                      "changed": [n for n, h in expected.items() if before.get(n) != h],
-                      "retired": sorted(set(before) - set(expected))})
+        before = hashes(target) if target.exists() else None
+        plans.append({"version": version, "target": str(target), "before": before, "new": before is None,
+                      "changed": [n for n, h in expected.items() if (before or {}).get(n) != h],
+                      "retired": sorted(set(before or {}) - set(expected))})
     report = {"zip": str(zip_path), "zip_sha256": digest(zip_path.read_bytes()),
               "files": len(files), "applied": False, "installations": []}
     completed = []
@@ -91,13 +93,15 @@ def sync(zip_path, blender_root, versions, apply=False):
             result = {k: v for k, v in plan.items() if k != "before"}
             report["installations"].append(result)
             if not apply or not plan["changed"] and not plan["retired"]:
-                result["verified"] = hashes(target) == expected
+                result["verified"] = target.exists() and hashes(target) == expected
                 continue
-            if hashes(target) != plan["before"]:
+            current = hashes(target) if target.exists() else None
+            if current != plan["before"]:
                 raise RuntimeError(f"Installation changed after planning: {target}")
             # Stage on the same volume, outside Blender's add-on discovery root.
             backups = target.parent.parent / ".codex-addon-backups"
-            backups.mkdir(exist_ok=True)
+            backups.mkdir(parents=True, exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             backup = backups / (PACKAGE + "-" + uuid.uuid4().hex)
             with tempfile.TemporaryDirectory(prefix=".dsts-stage-", dir=backups) as tmp:
                 staged = Path(tmp) / PACKAGE
@@ -108,24 +112,27 @@ def sync(zip_path, blender_root, versions, apply=False):
                     path.write_bytes(data)
                 if hashes(staged) != expected:
                     raise OSError("Staged add-on hash verification failed")
-                os.rename(target, backup)
+                if not plan["new"]:
+                    os.rename(target, backup)
                 try:
                     os.rename(staged, target)
                 except BaseException:
-                    os.rename(backup, target)
+                    if not plan["new"]:
+                        os.rename(backup, target)
                     raise
-                completed.append((target, backup))
+                completed.append((target, backup, plan["new"]))
                 if hashes(target) != expected:
                     raise OSError(f"Installed add-on hash verification failed: {target}")
-            result.update(backup=str(backup), verified=True)
+            result.update(backup=None if plan["new"] else str(backup), verified=True)
         report["applied"] = apply
         return report
     except BaseException:
-        for target, backup in reversed(completed):
+        for target, backup, was_new in reversed(completed):
             # Keep the failed new version too; never recursively delete an installation.
             failed = backup.with_name(backup.name + "-failed-new")
             os.rename(target, failed)
-            os.rename(backup, target)
+            if not was_new:
+                os.rename(backup, target)
         raise
 
 
@@ -135,9 +142,10 @@ def main():
     parser.add_argument("--blender-root", required=True, type=Path)
     parser.add_argument("--versions", nargs="+", default=["5.1", "5.3"])
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--allow-new", action="store_true", help="Explicitly allow an absent addon folder, for a fresh Blender installation")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    report = sync(args.zip, args.blender_root, args.versions, args.apply)
+    report = sync(args.zip, args.blender_root, args.versions, args.apply, allow_new=args.allow_new)
     output = json.dumps(report, indent=2) + "\n"
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

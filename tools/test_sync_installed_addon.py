@@ -66,6 +66,34 @@ class SyncTests(unittest.TestCase):
             self.assertEqual((target / '__init__.py').read_bytes(), b'old source')
             self.assertEqual((target / 'custom.txt').read_bytes(), b'user local data')
 
+    def test_new_installation_requires_explicit_option_and_only_selected_version(self):
+        fresh = self.root / 'fresh'
+        with self.assertRaises(FileNotFoundError):
+            installer.sync(self.zip, fresh, ['5.3'], True)
+        plan = installer.sync(self.zip, fresh, ['5.3'], allow_new=True)
+        self.assertTrue(plan['installations'][0]['new'])
+        self.assertFalse(fresh.exists())
+        report = installer.sync(self.zip, fresh, ['5.3'], True, allow_new=True)
+        result = report['installations'][0]
+        self.assertTrue(result['verified'])
+        self.assertIsNone(result['backup'])
+        self.assertFalse((fresh / '5.1').exists())
+        self.assertEqual(installer.hashes(Path(result['target'])),
+                         {name: installer.digest(raw) for name, raw in installer.read_package(self.zip).items()})
+
+    def test_failed_second_fresh_install_restores_absence(self):
+        fresh = self.root / 'fresh'
+        rename = installer.os.rename
+        def fail_second(source, target):
+            if Path(target) == fresh / '5.3/scripts/addons/Time_Stranger_Importer':
+                raise PermissionError('publication blocked')
+            return rename(source, target)
+        with patch.object(installer.os, 'rename', side_effect=fail_second):
+            with self.assertRaises(PermissionError):
+                installer.sync(self.zip, fresh, ['5.1', '5.3'], True, allow_new=True)
+        for version in ('5.1', '5.3'):
+            self.assertFalse((fresh / version / 'scripts/addons/Time_Stranger_Importer').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
