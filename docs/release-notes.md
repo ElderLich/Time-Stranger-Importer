@@ -1,0 +1,27 @@
+# Release notes
+
+## 1.5.5
+
+Geometry export preserves the donor mesh’s tangent declaration per draw. Re-exporting a saved New Century scene restores its native outline layout and keeps its body tangents. Draws sharing a material can retain distinct layouts.
+
+## 1.5.4
+
+Large skinned meshes split into native draws of up to 128 bones. New Century imports select the donor shader variant for each mesh’s actual weight count, including the outline. This preserves skin weights on high-bone-count bodies, clothing and wings.
+
+## 1.5.3
+
+**File → Export → Digimon Time Stranger → Native Skill Sequence** builds one attack from trimmed actor phases, source cinematic and battle cameras, and converted caster effects. [Sequence recipes](native-skill-sequence.md)
+
+## 1.5.2
+
+Cinematic cameras resolve duplicate socket names using the mesh skin and the selected clip’s animation hierarchy. Both Shoutmon X7 **Fusion Blazing Rocker** cinematics use the moving camera on `u288_b/root/JT1/JT2`. Select either cinematic in **Skill Phases (.glb)** and press **Numpad 0** in the 3D Viewport to look through the camera. [Cinematic walkthrough](add-a-playable-digimon.md#preview-the-cinematic)
+
+## 1.5.1
+
+New Century animation orientation and native facial rest scales were corrected. [Reimport instructions and facial preview](import-animation-fixes.md)
+
+## 1.5.0
+
+Assigning a native motion camera preserves its camera, rig, FOV and NLST bindings. [Native camera fitting](native-camera-fit.md)
+
+Earlier implementation and validation notes are in [the architecture guide](architecture.md).

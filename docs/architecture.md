@@ -1,5 +1,22 @@
 # Implementation and validation
 
+## Source layout
+
+Blender loads the root `__init__.py` for add-on metadata and registration. It also exposes the operator classes and helpers used by older Blender scripts. Edit their implementations under `src/operators/`.
+
+| If you are changing… | Look in |
+| --- | --- |
+| Menu items, sidebar controls, or the registration lifecycle | `src/operators/ui.py`, `registration.py` |
+| Donor paths, character IDs or collection selection | `src/operators/context.py` |
+| Geometry import/export buttons or model packaging | `src/operators/geometry.py` |
+| Pose, transforms, UV preparation or material retargeting | `src/operators/rig.py`, `materials.py` |
+| Animation file operators or NLA track setup | `src/operators/animation.py`, `nla.py` |
+| New Century model import, moveset slots and fallback clips | `src/operators/new_century.py` (including `_NC_MOVESET_MAP`) |
+| Captured phase selection, previews or native skill recipes | `src/nc_skill_ui.py`, `src/nc_preview_source.py`, `src/nc_native_skill_ui.py`, `src/skill_conversion/` |
+| Low-level geometry, material, skeleton or animation conversion | `src/geom.py`, `src/mesh.py`, `src/material.py`, `src/skeleton.py`, `src/animation.py` |
+
+Blender-independent tests live under `tests/` and `tools/test_*.py`. Blender integration checks and the ZIP builder live under `tools/`. Use `build/` for generated test output and `dist/` for installable ZIPs. [Run the checks](#run-the-checks)
+
 ## Version 1.4 skill/effect additions
 
 The [skill/effect workflow](skill-effect-workflows.md) documents the new generic
@@ -170,7 +187,11 @@ format or inject a sound bank into the game.
 
 ## Run the checks
 
+From the repository root, run both Python suites. Run the Blender checks with the geometry backend and the local game fixtures available.
+
 ```powershell
+python -m unittest discover -s tests
+python -m unittest discover -s tools -p "test_*.py"
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_smoke.py
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_smoke.py -- --nc-export
 blender --background --factory-startup --python-exit-code 1 --python tools/blender_material_contract.py
