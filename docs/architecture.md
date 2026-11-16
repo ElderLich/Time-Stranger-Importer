@@ -185,7 +185,15 @@ motion and lens actions, VSE sound strips and nonrendered source-effect records.
 It does **not** translate Unity particles/shaders into Time Stranger's effect
 format or inject a sound bank into the game.
 
+## Publish a release
+
+Push to `master`. Each push gets one patch version. GitHub builds the ZIP, checks its embedded Blender version and publishes the tagged source alongside the ZIP. Release notes list the commit subjects in that push. To add a user-facing overview, write it under the matching version heading in `docs/release-notes.md`.
+
+The push-only `release.yml` workflow supplies the run number, so retrying a failed run keeps its version. The tag contains the version-stamped source. On `master`, `bl_info` records the starting version of the series. For a new minor or major series, update that tuple and set `FIRST_SERIES_RUN` in `tools/prepare_release.py` to the next push workflow run number.
+
 ## Run the checks
+
+To build a released version locally, check out its Git tag and run `python tools/package_addon.py`. Blender installs the resulting `dist/Time_Stranger_Importer.zip`.
 
 From the repository root, run both Python suites. Run the Blender checks with the geometry backend and the local game fixtures available.
 

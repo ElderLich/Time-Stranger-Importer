@@ -1,0 +1,13 @@
+name: Release Blender Addon
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/package.yml
+    with:
+      automatic_release: true

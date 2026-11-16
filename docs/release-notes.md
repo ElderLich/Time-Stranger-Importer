@@ -1,5 +1,11 @@
 # Release notes
 
+## 1.5.6
+
+- The README and [guide index](README.md) now lead directly to model editing, cinematic previews, skill conversion and packaging.
+- Blender operators are organized by workflow. Existing scripts can still import their helpers from the add-on entry point. The [credits](credits.md) distinguish this repository’s author from the developers of earlier tools.
+- Each push to `master` now publishes an installable Blender ZIP and change notes on GitHub Releases.
+
 ## 1.5.5
 
 Geometry export preserves the donor mesh’s tangent declaration per draw. Re-exporting a saved New Century scene restores its native outline layout and keeps its body tangents. Draws sharing a material can retain distinct layouts.

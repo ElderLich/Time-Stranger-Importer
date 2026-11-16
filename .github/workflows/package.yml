@@ -2,68 +2,103 @@ name: Package Blender Addon
 
 on:
   push:
-    branches:
-      - master
-      - main
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      automatic_release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   package:
-    name: Validate and package addon
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Validate Python syntax
-        run: python -m compileall -q __init__.py data external src
+      - name: Set the Blender release version
+        id: version
+        if: inputs.automatic_release || startsWith(github.ref, 'refs/tags/v')
+        env:
+          AUTOMATIC_RELEASE: ${{ inputs.automatic_release }}
+        run: |
+          if [[ "$AUTOMATIC_RELEASE" == "true" ]]; then
+            tag=$(python tools/prepare_release.py --run-number "$GITHUB_RUN_NUMBER")
+          else
+            tag=$(python tools/prepare_release.py --tag "$GITHUB_REF_NAME")
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Build installable zip
-        run: python tools/package_addon.py --output dist/Time_Stranger_Importer.zip
+      - name: Validate syntax and build the installable ZIP
+        run: |
+          python -m compileall -q __init__.py data external src
+          python tools/package_addon.py
 
       - name: Check package contents
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
           python - <<'PY'
-          from pathlib import Path
+          import ast
+          import os
           import zipfile
 
-          zip_path = Path("dist/Time_Stranger_Importer.zip")
-          required = {
-              "Time_Stranger_Importer/__init__.py",
-              "Time_Stranger_Importer/src/dsts_formats.cp313-win_amd64.pyd",
-          }
-          with zipfile.ZipFile(zip_path) as zf:
-              names = set(zf.namelist())
-          missing = sorted(required - names)
-          if missing:
-              raise SystemExit(f"package missing required files: {missing}")
-          print(f"OK: {zip_path} contains {len(names)} files")
+          with zipfile.ZipFile("dist/Time_Stranger_Importer.zip") as archive:
+              assert archive.testzip() is None
+              archive.getinfo("Time_Stranger_Importer/src/dsts_formats.cp313-win_amd64.pyd")
+              source = archive.read("Time_Stranger_Importer/__init__.py")
+          tree = ast.parse(source)
+          info = next(n.value for n in tree.body if isinstance(n, ast.Assign) and
+                      any(isinstance(t, ast.Name) and t.id == "bl_info" for t in n.targets))
+          tag = "v" + ".".join(map(str, ast.literal_eval(info)["version"]))
+          assert not os.environ["RELEASE_TAG"] or tag == os.environ["RELEASE_TAG"]
+          print(f"Verified installable Blender add-on {tag}")
           PY
 
-      - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Time_Stranger_Importer
           path: dist/Time_Stranger_Importer.zip
           if-no-files-found: error
+          overwrite: true
 
-      - name: Attach package to tagged release
-        if: startsWith(github.ref, 'refs/tags/')
+  publish:
+    needs: package
+    if: (inputs.automatic_release || startsWith(github.ref, 'refs/tags/v')) && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: importer-release-publication
+      queue: max
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Time_Stranger_Importer
+          path: dist
+
+      - name: Publish the tested ZIP and change notes
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/Time_Stranger_Importer.zip \
-            --title "$GITHUB_REF_NAME" \
-            --notes "Automated Time Stranger Importer build." \
-          || gh release upload "$GITHUB_REF_NAME" dist/Time_Stranger_Importer.zip --clobber
+          RELEASE_TAG: ${{ needs.package.outputs.tag }}
+          BEFORE: ${{ github.event.before }}
+          AUTOMATIC_RELEASE: ${{ inputs.automatic_release }}
+        run: bash tools/publish_release.sh
