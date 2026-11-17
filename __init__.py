@@ -3,7 +3,7 @@
 bl_info = {
     "name": "Time Stranger Importer",
     "author": "Senator John (ElderLich)",
-    "version": (1, 5, 6),
+    "version": (1, 5, 7),
     "blender": (5, 0, 0),
     "category": "Import-Export",
     "description": "Import/Export .geom and .anim files for Digimon Time Stranger",
