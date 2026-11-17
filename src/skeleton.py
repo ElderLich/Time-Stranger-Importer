@@ -8,7 +8,7 @@ import json
 import base64
 from . import dsts_formats
 
-def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
+def import_skeleton(skeleton, target_collection=None, coordinate_remap=None, rigid_scene=False):
     """
     Imports a Skeleton object into Blender as an armature.
     Bone transforms are parent-relative (bind pose).
@@ -20,6 +20,8 @@ def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
     # Create Armature Data and Object
     armature_data = bpy.data.armatures.new("Skeleton")
     armature_obj = bpy.data.objects.new("Geom", armature_data)
+    if rigid_scene:
+        armature_obj['DSTS_rigid_scene'] = True
     if hasattr(skeleton, 'to_bytes'):
         # This compact native skeleton also retains flagged/duplicate parent
         # records which are not expressible through Blender's single parent.
@@ -62,7 +64,9 @@ def import_skeleton(skeleton, target_collection=None, coordinate_remap=None):
         # Note: The quaternion is assumed to be (x,y,z,w) in the source data, 
         # converted to Blender's (w,x,y,z) order here.
         pos = mathutils.Vector(p[:3])
-        scl = mathutils.Vector(s[:3])
+        # Rigid effects use scale as animated visibility, including zero. Keep
+        # a nonsingular edit rig; the authored scales live on its pose layer.
+        scl = mathutils.Vector((1, 1, 1) if rigid_scene else s[:3])
         quat = mathutils.Quaternion((q[3], q[0], q[1], q[2])) 
 
         mat_loc = mathutils.Matrix.Translation(pos)

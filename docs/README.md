@@ -22,6 +22,7 @@
 | Fit a native camera and preserve its rig, lens and name list | [Native camera fitting](native-camera-fit.md) |
 | Edit native effect timing or collision shapes | [Timelines and collisions](native-timeline-collision.md) |
 | Import cameras and lights with their owning model | [Native scenes](native-scene.md) · [Light records](native-lights.md) |
+| Import a native rigid effect, play its animation and read import warnings | [Native rigid effects](native-rigid-effects.md) |
 | Reconstruct an ordinary attack’s stand timing and actor motion | [Actor lifecycle](actor-lifecycle.md) |
 
 ## Convert particle effects

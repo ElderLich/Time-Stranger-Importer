@@ -1,4 +1,4 @@
-"""Bounded native rest-scale adapter for unit-bind, uniform-scale leaf bones.
+"""Native rest scales for unit-bind facial leaves and fully rigid scenes.
 
 GEOM rest TRS and inverse bind matrices are separate authored data. A constant
 NLA scale layer preserves that distinction without multiplying it into each
@@ -26,7 +26,7 @@ def is_rest_track(track):
 
 
 def apply_profile(geom, owner, names=None):
-    """Apply only independently recognizable positive uniform leaf scaling."""
+    """Retain independent facial scales or rigid scenes' absolute local scales."""
     if MARKER in owner:
         return json.loads(owner[MARKER])
     snapshot = bytes(getattr(geom, 'bind_pose_snapshot', b''))
@@ -80,9 +80,13 @@ def apply_profile(geom, owner, names=None):
             handled.append(bone.name)
         else:
             unhandled.append(bone.name)
+    rigid = bool(owner.get('DSTS_rigid_scene'))
+    if rigid:
+        scales = {names.get(b.name, b.name): [float(v) for v in b.transform.scale[:3]] for b in bones}
+        handled, unhandled = [], []
     if not scales:
         return None
-    profile = {'profile': 'unit-bind-uniform-leaf-rest-scale-v1', 'scales': scales,
+    profile = {'profile': 'rigid-local-trs-v1' if rigid else 'unit-bind-uniform-leaf-rest-scale-v1', 'scales': scales,
                'source_bones': handled,
                'source_geometry': [bool(bone.is_geometry) for bone in bones],
                'unhandled_mismatches': unhandled,
@@ -93,15 +97,16 @@ def apply_profile(geom, owner, names=None):
     action[MARKER] = True
     for pose in owner.pose.bones:
         factor = scales.get(pose.name, 1)
+        scale = tuple(factor) if isinstance(factor, (list, tuple)) else (factor,) * 3
         pose.rotation_mode = 'QUATERNION'
         pose.location = (0, 0, 0)
         pose.rotation_quaternion = (1, 0, 0, 0)
-        pose.scale = (factor,) * 3
+        pose.scale = scale
         # Blender retains previously evaluated channels when every clip that
         # wrote them is muted. An explicit neutral base also resets those
         # channels, so returning from a native clip restores the authored pose.
         for channel, values in (('location', (0, 0, 0)), ('rotation_quaternion', (1, 0, 0, 0)),
-                                ('scale', (factor, factor, factor))):
+                                ('scale', scale)):
             for axis, value in enumerate(values):
                 curve = create_action_fcurve(action, owner, pose.path_from_id() + '.' + channel,
                                               index=axis, group_name=pose.name)
@@ -110,10 +115,11 @@ def apply_profile(geom, owner, names=None):
                 curve.keyframe_points[0].interpolation = 'CONSTANT'
     action.use_frame_range = True
     action.frame_start, action.frame_end = 1, 2
-    track, strip = create_nla_track(owner, action, TRACK_NAME, 1, blend_type='COMBINE')
+    blend = 'REPLACE' if rigid else 'COMBINE'
+    track, strip = create_nla_track(owner, action, TRACK_NAME, 1, blend_type=blend)
     track.mute, track.lock = False, True
     strip.extrapolation = 'HOLD'
-    owner.animation_data.action_blend_type = 'COMBINE'
+    owner.animation_data.action_blend_type = blend
     bpy.context.view_layer.update()
     return profile
 
@@ -157,7 +163,8 @@ def expected_basis(owner, bone):
         parent_source = json.loads(parent.get('DSTS_source_rest', '{}'))
         if [v for row in parent.matrix_local for v in row] != parent_source.get('matrix'):
             return Matrix.Identity(4)
-    return Matrix.Diagonal((factor, factor, factor, 1))
+    scale = tuple(factor) if isinstance(factor, (list, tuple)) else (factor,) * 3
+    return Matrix.Diagonal((*scale, 1))
 
 
 def validate_preview_layer(owner):

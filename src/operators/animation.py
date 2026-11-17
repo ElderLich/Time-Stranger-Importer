@@ -155,8 +155,9 @@ def _build_anim_action_and_nla(armature_obj, anim_name, anim_data, bone_names, r
         action = _build_anim_action_from_data(armature_obj, anim_name, anim_data, bone_names)
         start_frame = int(action.frame_range[0]) if action.frame_range[0] > 0 else 1
         scale = scene_fps(bpy.context.scene) / anim_data.playback_rate if anim_data.playback_rate > 0 else 1.0
+        from ..animation import native_blend_type
         new_track, _ = create_nla_track(armature_obj, action, anim_name, start_frame,
-                                        scale=scale, blend_type='COMBINE')
+                                        scale=scale, blend_type=native_blend_type(armature_obj))
     except Exception:
         for track in list(ad.nla_tracks):
             if track not in before_tracks:

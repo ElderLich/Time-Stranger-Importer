@@ -92,7 +92,7 @@ def _ensure_export_transforms_are_baked(collection):
             details += f"\n- ... and {len(posed_bones) - 12} more posed bone(s)"
         rest_advice = (
             'Mute native motion clips and clear the active Action while keeping the Native rest scale track enabled. '
-            'Its authored facial scale is part of the original geometry and must not be cleared with Alt+S. '
+            'Its authored rest scale is part of the original geometry and must not be cleared with Alt+S. '
             if native_rest_rigs else
             'To export the original rest pose instead, clear the pose with Alt+G, Alt+R, and Alt+S. ')
         raise RuntimeError(
@@ -175,7 +175,8 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
         if hasattr(geom, 'bind_pose_snapshot') and geom.bind_pose_snapshot:
             new_collection['DSTS_bind_pose_snapshot'] = base64.b64encode(geom.bind_pose_snapshot).decode('ascii')
 
-        skeleton_result = skeleton.import_skeleton(geom.skeleton, new_collection, utils.unflop)
+        skeleton_result = skeleton.import_skeleton(geom.skeleton, new_collection, utils.unflop,
+                                                   rigid_scene=getattr(geom, 'is_rigid_scene', False))
         if isinstance(skeleton_result, tuple):
             armature_obj, bone_name_map = skeleton_result
         else:
@@ -234,6 +235,8 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
             else:
                 mesh.preserve_draw_layout(obj.data, mat, mesh_obj)
 
+        from .native_bounds import preserve_bounds
+        preserve_bounds(new_collection, geom)
         error_list = dsts_formats.get_error_list()
         if error_list:
             new_collection['DSTS_backend_diagnostics'] = '\n'.join(error_list)
@@ -245,10 +248,7 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
         error_list = [e for e in error_list if not (is_camera and "camera data" in e.lower())]
         if error_list:
             new_collection['DSTS_import_warnings'] = '\n'.join(error_list)
-            if bpy.app.background:
-                print('[DSTS] Import warnings:', '\n'.join(error_list))
-            else:
-                bpy.ops.wm.show_errors_window('INVOKE_DEFAULT', errors="\n\n".join(error_list))
+            print('[DSTS] Import warnings:', '\n'.join(error_list))
 
         import_animations_for_geom(filepath, armature_obj)
         if armature_obj is not None:
@@ -256,6 +256,13 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
             notes = configure_preview(new_collection, armature_obj, filepath)
             if notes:
                 new_collection['DSTS_texture_preview_notes'] = '\n'.join(notes)
+        if error_list and not bpy.app.background:
+            try:
+                bpy.ops.wm.show_errors_window('INVOKE_DEFAULT', errors="\n\n".join(error_list))
+            except RuntimeError as exc:
+                # A completed import must survive an unavailable UI context.
+                # Diagnostics remain on the collection and in the console.
+                print(f'[DSTS] Could not display import warnings: {exc}')
         return new_collection
 
     finally:
@@ -301,7 +308,8 @@ def _import_animation_to_nla(armature_obj, anim_name, anim_data, bone_names):
     from .blender_compat import scene_fps
     action = build_action(armature_obj, anim_name, anim_data, bone_names)
     scale = scene_fps(bpy.context.scene) / anim_data.playback_rate if anim_data.playback_rate > 0 else 1.0
-    create_nla_track(armature_obj, action, anim_name, 1, scale=scale, blend_type='COMBINE')
+    from .animation import native_blend_type
+    create_nla_track(armature_obj, action, anim_name, 1, scale=scale, blend_type=native_blend_type(armature_obj))
 
 
 def export_geom(collection):
@@ -394,6 +402,8 @@ def export_geom(collection):
         if preserved is not None:
             return preserved
 
+    from .native_bounds import restore_bounds
+    restore_bounds(collection, geom)
     return geom
 
 

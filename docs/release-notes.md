@@ -1,5 +1,12 @@
 # Release notes
 
+## 1.5.8
+
+- Fixed the warning-window crash when importing `ef_b_chr220_bs01.geom` from Blender’s file browser. A compact popup and saved Text Editor report replace editor duplication; a missing popup context no longer discards a completed import.
+- Fully rigid native effects now use bone-local attachments and absolute animation channels. Zero-scale particle visibility keys are preserved, including groups that become visible later in the clip.
+- Removed false bounds and unused-helper bind warnings for these rigid scenes. Unchanged spatial data retains its authored culling bounds on export; malformed numeric bounds and unexpected bind matrices remain diagnosed.
+- Verified the reported effect’s meshes, animation keys, bind matrices and bounds, plus ordinary character, camera and New Century regressions. [Import and preview native effects](native-rigid-effects.md)
+
 ## 1.5.6
 
 - The README and [guide index](README.md) now lead directly to model editing, cinematic previews, skill conversion and packaging.

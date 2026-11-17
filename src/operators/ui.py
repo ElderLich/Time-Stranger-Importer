@@ -1,5 +1,8 @@
 """File menus, the DSTS sidebar and error reporting."""
 
+from collections import Counter
+from textwrap import wrap
+
 import bpy
 from bpy.props import StringProperty
 from bpy.types import Operator, Panel
@@ -124,32 +127,42 @@ class DSTS_PT_WorkflowPanel(Panel):
 
 
 class DSTS_OT_ShowErrors(Operator):
-    """Show errors in a new window"""
+    """Save import diagnostics in the Text Editor and show a compact summary"""
     bl_idname = "wm.show_errors_window"
-    bl_label = "Import Errors"
+    bl_label = "Import Warnings"
 
     errors: StringProperty()
     window_name: StringProperty(default="Import Errors Window")
-    text_name: StringProperty(default="Import Errors")
+    text_name: StringProperty(default="Import Warnings")
 
     def execute(self, context):
+        text = bpy.data.texts.new(name=self.text_name)
+        text.write("Warnings during import:\n\n" + self.errors)
+        text.use_fake_user = True
+        self.text_name = text.name
+        self.report({'WARNING'}, f'Import warnings saved in Text Editor as "{text.name}"')
         return {'FINISHED'}
 
     def invoke(self, context, event):
-        bpy.ops.screen.area_dupli('INVOKE_DEFAULT')
-        new_window = context.window_manager.windows[-1]
-        for area in new_window.screen.areas:
-            area.type = 'TEXT_EDITOR'
-            for space in area.spaces:
-                if space.type == 'TEXT_EDITOR':
-                    text = bpy.data.texts.new(name=self.text_name)
-                    text.clear()
-                    text.write("Errors during import:\n\n" + self.errors)
-                    space.text = text
-                    text.current_line_index = 0
-                    space.top = 0
-        new_window.screen.name = self.window_name
-        return {'FINISHED'}
+        self.execute(context)
+        if bpy.app.background or context.window is None:
+            return {'FINISHED'}
+        # File-browser callbacks and timers can have a window without an editor
+        # area. A popup uses the window and does not need to duplicate an area.
+        return context.window_manager.invoke_popup(self, width=640)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Import completed with warnings", icon='INFO')
+        messages = Counter(line for line in self.errors.splitlines() if line.strip())
+        for message, count in list(messages.items())[:8]:
+            summary = f"{message} ({count} occurrences)" if count > 1 else message
+            for line in wrap(summary, width=85):
+                layout.label(text=line)
+        if len(messages) > 8:
+            layout.label(text=f"{len(messages) - 8} more warning types in the full report.")
+        layout.separator()
+        layout.label(text=f'Text Editor report: "{self.text_name}"')
 
 
 class DSTS_MT_ImportSubmenu(bpy.types.Menu):

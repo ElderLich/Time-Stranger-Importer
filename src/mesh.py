@@ -254,8 +254,20 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
     # --- PARENTING ---
     if armature_obj:
         obj.parent = armature_obj
-        mod = obj.modifiers.new(name="Armature", type='ARMATURE')
-        mod.object = armature_obj
+        if armature_obj.get('DSTS_rigid_scene'):
+            name = bl_mesh.matrix_palette[0].name
+            name = bone_name_map.get(name, name) if bone_name_map else name
+            group = obj.vertex_groups.get(name) or obj.vertex_groups.new(name=name)
+            group.add(list(range(num_verts)), 1.0, 'REPLACE')
+            obj.parent_type, obj.parent_bone = 'BONE', name
+            # Bone parenting is at the tail; native rigid vertices are local to
+            # its head and still cross the model's axis-remapping boundary.
+            axes = coord_transform if isinstance(coord_transform, Matrix) else Matrix.Identity(4)
+            obj.matrix_parent_inverse = Matrix.Translation((0, -armature_obj.data.bones[name].length, 0)) @ axes.inverted()
+            obj['DSTS_rigid_attachment'] = name
+        else:
+            mod = obj.modifiers.new(name="Armature", type='ARMATURE')
+            mod.object = armature_obj
 
     # --- FLAGS ---
     mesh_data["DSTS_flag_0"] = bl_mesh.flag_0
@@ -337,6 +349,15 @@ def export_vertex_layout(mesh):
 def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotation(math.radians(-90), 4, 'X'),
                        *, split_palettes=False):
     mesh = mesh_obj.data
+    if 'DSTS_rigid_attachment' in mesh_obj:
+        owner, name = mesh_obj.parent, mesh_obj.get('DSTS_rigid_attachment')
+        if (not owner or owner.type != 'ARMATURE' or mesh_obj.parent_type != 'BONE' or
+                mesh_obj.parent_bone != name or name not in owner.data.bones or
+                len(mesh_obj.vertex_groups) != 1 or mesh_obj.vertex_groups[0].name != name):
+            raise ValueError(f"Rigid effect mesh '{mesh_obj.name}' must retain its native bone attachment")
+        expected = Matrix.Translation((0, -owner.data.bones[name].length, 0)) @ coord_transform
+        if max(abs(mesh_obj.matrix_parent_inverse[r][c] - expected[r][c]) for r in range(4) for c in range(4)) > 1e-5:
+            raise ValueError(f"Rigid effect mesh '{mesh_obj.name}' has an edited attachment transform")
     if any(mod.type != 'ARMATURE' and (mod.show_viewport or mod.show_render) for mod in mesh_obj.modifiers):
         raise ValueError(f"Mesh '{mesh.name}' has unapplied modifiers; apply them before export")
     if mesh.shape_keys and any(abs(key.value) > 1e-7 for key in mesh.shape_keys.key_blocks):

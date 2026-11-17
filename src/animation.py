@@ -10,6 +10,22 @@ from .anim.InterfaceHundredLine import AnimFileHundredLine
 from .blender_compat import create_action_fcurve, iter_action_fcurves, scene_fps
 
 
+def native_blend_type(owner):
+    return 'REPLACE' if owner.get('DSTS_rigid_scene') else 'COMBINE'
+
+
+def rigid_rest(owner, bone):
+    if not owner.get('DSTS_rigid_scene'):
+        return None
+    rest = json.loads(bone.get('DSTS_source_rest', '{}'))
+    if [v for row in bone.matrix_local for v in row] != rest.get('matrix'):
+        raise ValueError('Rigid effect animation requires its original rest rig')
+    parent = bone.parent.get('DSTS_source_bone_index', -2) if bone.parent else -1
+    if parent != rest.get('parent'):
+        raise ValueError('Rigid effect animation requires its original bone hierarchy')
+    return rest
+
+
 def location_to_native_matrix(bone):
     """Blender location channels -> native parent-space additive translation.
 
@@ -49,7 +65,7 @@ def build_action(owner, name, source, bone_names=None):
     before = set(bpy.data.actions)
     ad = owner.animation_data or owner.animation_data_create()
     if MARKER in owner:
-        ad.action_blend_type = 'COMBINE'
+        ad.action_blend_type = native_blend_type(owner)
     previous_action, previous_slot = ad.action, getattr(ad, 'action_slot', None)
     previous_properties = set(owner.keys())
     previous_floats = {key: owner[key] for key in owner.keys() if key.startswith('DSTS_float_')}
@@ -86,14 +102,21 @@ def _build_action(owner, name, source, bone_names=None):
         "float_count": source.float_channel_count,
         "unknown_section": list(source.unknown_section),
         "location_space": "blender-basis-v1",
+        "transform_space": "absolute-rigid-v1" if owner.get('DSTS_rigid_scene') else "native-delta-v1",
     })
     for index, name in enumerate(bone_names[:source.bone_count]):
         bone = owner.pose.bones[name]
         bone.rotation_mode = 'QUATERNION'
         prefix = bone.path_from_id()
+        rest = rigid_rest(owner, bone.bone)
         for channel, data, count in (("location", source.positions, 3),
                                       ("scale", source.scales, 3)):
             values = data.get(index, {})
+            if rest:
+                default = rest['position' if channel == 'location' else 'scale'][:3]
+                values = values or {0: default}
+                if channel == 'location':
+                    values = {f: Vector(v) - Vector(default) for f, v in values.items()}
             if channel == 'location' and values:
                 to_blender = location_to_native_matrix(bone.bone).inverted()
                 values = {f: to_blender @ Vector(v) for f, v in values.items()}
@@ -102,6 +125,10 @@ def _build_action(owner, name, source, bone_names=None):
                     _write_curve(action, owner, prefix + "." + channel, component,
                                  [(f + 1, v[component]) for f, v in values.items()], name)
         values = source.rotations.get(index, {})
+        if rest:
+            values = values or {0: rest['quaternion']}
+            r = rest['quaternion']
+            inverse_rest = Quaternion((r[3], *r[:3])).inverted()
         if values:
             # Bake source spherical interpolation, avoiding Bezier overshoot and
             # antipodal quaternion flips in Blender's component F-curves.
@@ -119,6 +146,8 @@ def _build_action(owner, name, source, bone_names=None):
                 if qa.dot(qb) < 0:
                     qb.negate()
                 q = qa.slerp(qb, (frame - a) / (b - a)) if b != a else qa
+                if rest:
+                    q = inverse_rest @ q
                 if previous is not None and previous.dot(q) < 0:
                     q.negate()
                 samples.append((frame + 1, tuple(q)))
@@ -196,6 +225,7 @@ def build_from_action(owner, action, playback_rate=30.0, slot=None, frame_range=
         return any(path == prefix + channel for path, _ in by_key)
 
     for index, bone in enumerate(bones):
+        rest = rigid_rest(owner, bone)
         prefix = owner.pose.bones[bone.name].path_from_id() + "."
         result.positions[index] = {}
         result.rotations[index] = {}
@@ -207,6 +237,9 @@ def build_from_action(owner, action, playback_rate=30.0, slot=None, frame_range=
                 if channel == 'location' and not preserve_native_locations:
                     to_native = location_to_native_matrix(bone)
                     target[index] = {i: list(to_native @ Vector(v)) for i, v in target[index].items()}
+                    if rest:
+                        target[index] = {i: list(Vector(v) + Vector(rest['position'][:3]))
+                                         for i, v in target[index].items()}
         previous = None
         rotation = next((c for c in ("rotation_quaternion", "rotation_euler", "rotation_axis_angle")
                          if has(prefix, c)), None)
@@ -222,6 +255,9 @@ def build_from_action(owner, action, playback_rate=30.0, slot=None, frame_range=
                     angle, *axis = vector(prefix, rotation, [0, 0, 1, 0], frame)
                     q = Quaternion(axis, angle)
                 q.normalize()
+                if rest:
+                    r = rest['quaternion']
+                    q = Quaternion((r[3], *r[:3])) @ q
                 if previous is not None and previous.dot(q) < 0:
                     q.negate()
                 result.rotations[index][i] = [q.x, q.y, q.z, q.w]
