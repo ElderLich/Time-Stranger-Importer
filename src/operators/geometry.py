@@ -37,6 +37,10 @@ class DSTS_OT_GeomImport(Operator, ImportHelper):
         name="Camera and Light Previews", default=False,
         description="Import owned native camera bindings and light controls with the model; records are preserved even when previews are disabled",
     )
+    inspect_rigid_components: BoolProperty(
+        name="Inspect Rigid Effect Components", default=False,
+        description="For fully rigid effects, open a static view of their local meshes and color textures after importing",
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -47,6 +51,7 @@ class DSTS_OT_GeomImport(Operator, ImportHelper):
         row.enabled = self.use_custom_images_path
         row.prop(self, "images_path")
         layout.prop(self, "include_scene_records")
+        layout.prop(self, "inspect_rigid_components")
 
     def execute(self, context):
         try:
@@ -54,6 +59,14 @@ class DSTS_OT_GeomImport(Operator, ImportHelper):
             images_folder = bpy.path.abspath(self.images_path) if self.use_custom_images_path and self.images_path else None
             imported_collection = import_geom(context, self.filepath, images_folder,
                                               include_scene_records=self.include_scene_records)
+            if self.inspect_rigid_components:
+                from .rigid_components import is_rigid_effect, open_components
+                if is_rigid_effect(imported_collection):
+                    try:
+                        open_components(context, imported_collection)
+                    except Exception as exc:
+                        self.report({'WARNING'}, f"Imported geometry. Could not open the component view: {exc}")
+                        return {'FINISHED'}
             self.report({'INFO'}, f"Imported: {imported_collection.name}")
             return {'FINISHED'}
         except Exception as exc:

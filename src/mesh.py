@@ -56,7 +56,7 @@ def extract_attribute(raw_bytes, stride, num_verts, attr):
 # ----------------------------------------------------------
 # Convert Mesh → Blender Mesh (Optimized)
 # ----------------------------------------------------------
-def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict, collection, coord_transform=Matrix.Rotation(math.radians(90), 4, 'X'), bone_name_map=None):
+def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict, collection, coord_transform=Matrix.Rotation(math.radians(90), 4, 'X'), bone_name_map=None, *, external_name=''):
     
     attributes, stride, packed = bl_mesh.pack_vertices()
     num_verts = len(packed) // stride
@@ -78,7 +78,8 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
     flat_indices = bl_mesh.get_indices()
     faces = np.array(flat_indices, dtype=np.int32).reshape(-1, 3)
 
-    mesh_data = bpy.data.meshes.new(bl_mesh.name)
+    display_name = bl_mesh.name or external_name or f'Mesh_{bl_mesh.name_hash:08x}'
+    mesh_data = bpy.data.meshes.new(display_name)
     mesh_data.from_pydata(positions, [], faces)
     
     mesh_data.update(calc_edges=True)
@@ -184,7 +185,14 @@ def import_mesh_object(bl_mesh: dsts_formats.Mesh, armature_obj, materials_dict,
             mesh_data.calc_tangents(uvmap=mesh_data.uv_layers[0].name)
     
     # --- OBJECT ---
-    obj = bpy.data.objects.new(bl_mesh.name, mesh_data)
+    obj = bpy.data.objects.new(display_name, mesh_data)
+    if not bl_mesh.name:
+        # Blender can truncate names or supply distinct object/datablock
+        # suffixes. Neither is part of the native draw identity.
+        mesh_data['DSTS_external_mesh_hash'] = f'{bl_mesh.name_hash:08x}'
+        mesh_data['DSTS_external_mesh_name'] = external_name
+        mesh_data['DSTS_import_mesh_name'] = mesh_data.name
+        obj['DSTS_import_mesh_object_name'] = obj.name
     collection.objects.link(obj)
 
     if bl_mesh.material and bl_mesh.material.name in materials_dict:
@@ -500,6 +508,17 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
 
     from .skin_palette import split_skin_palette
     draws = split_skin_palette(mesh_out, vert_indices)
+    if 'DSTS_external_mesh_hash' in mesh:
+        renamed = None
+        if mesh.name != mesh['DSTS_import_mesh_name']:
+            renamed = mesh.name
+        elif mesh_obj.name != mesh_obj.get('DSTS_import_mesh_object_name', mesh_obj.name):
+            renamed = mesh_obj.name
+        for draw in draws:
+            if renamed:
+                draw.name = renamed
+            else:
+                draw.set_external_name(int(mesh['DSTS_external_mesh_hash'], 16), mesh['DSTS_external_mesh_name'])
     if split_palettes:
         return draws
     if len(draws) != 1:

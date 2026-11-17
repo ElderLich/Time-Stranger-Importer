@@ -28,6 +28,7 @@ from .new_century import (
     DSTS_OT_NcGlbImport,
 )
 from .nla import DSTS_OT_SetupBaseAnimationNla
+from .rigid_components import SOURCE_COLLECTION, is_rigid_effect
 from .rig import (
     DSTS_OT_ApplyArmatureObjectTransforms,
     DSTS_OT_PrepareSelectedAsGeom,
@@ -46,8 +47,13 @@ class DSTS_PT_WorkflowPanel(Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
+        if SOURCE_COLLECTION in scene:
+            layout.operator('scene.dsts_return_to_effect', icon='LOOP_BACK')
+            return
         collection = _active_geom_collection(context)
         collection_name = collection.name if collection else "__NONE__"
+        if is_rigid_effect(collection) and collection in scene.collection.children_recursive:
+            layout.operator('scene.dsts_inspect_rigid_components', icon='MESH_DATA').collection_name = collection.name
         if collection and 'DSTS_camera_source' in collection:
             lens = layout.box()
             lens.label(text='Native Camera Lens')

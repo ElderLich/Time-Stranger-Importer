@@ -1,5 +1,11 @@
 # Release notes
 
+## 1.5.9
+
+- **Inspect Rigid Effect Components** opens a static, textured view of every local mesh, including pieces hidden by the native rest pose. Return to the original scene for animation and export. [Rigid effect guide](native-rigid-effects.md)
+- Material Preview follows animated tint and visibility on supported native effect shaders, including the smoke and sparks in `ef_b_chr220_bs01`.
+- Hash-only draw names resolve from the matching NLST. The reported effect’s 205 native draw hashes, external name offsets and light classification now survive export.
+
 ## 1.5.8
 
 - Fixed the warning-window crash when importing `ef_b_chr220_bs01.geom` from Blender’s file browser. A compact popup and saved Text Editor report replace editor duplication; a missing popup context no longer discards a completed import.

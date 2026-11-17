@@ -299,8 +299,8 @@ class DSTS_OT_EffectDrawableSelect(Operator, ImportHelper):
             path = Path(self.filepath).resolve()
             raw, names = path.read_bytes(), path.with_suffix('.nlst').read_bytes()
             from .backend import load_format_modules
-            from .model_package import _nlst_rows, validate_matrix_alignment, validate_runtime_skinning
-            from .nlst import write_nlst
+            from .model_package import validate_matrix_alignment, validate_runtime_skinning
+            from .nlst import matches_geom
             backend, *_ = load_format_modules()
             old_throw, old_errors = backend.get_throw_errors(), backend.get_error_list()
             try:
@@ -312,7 +312,7 @@ class DSTS_OT_EffectDrawableSelect(Operator, ImportHelper):
                 backend.set_error_list(old_errors)
             validate_matrix_alignment(raw, len(geom.skeleton.bones))
             validate_runtime_skinning(raw, geom)
-            if _nlst_rows(names.decode('utf-8-sig')) != _nlst_rows(write_nlst(geom)):
+            if not matches_geom(geom, names.decode('utf-8-sig')):
                 raise ValueError('Selected GEOM and NLST do not describe the same resource')
             _source(obj).set_field(tuple(json.loads(field.path_json)), path.stem)
             field.resource_path = str(path)

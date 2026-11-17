@@ -212,6 +212,8 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
             mat['DSTS_source_material_name'] = source_name
             blender_materials[mat_data.name] = mat
 
+        from .nlst import import_mesh_names
+        external_names, name_warnings = import_mesh_names(geom, filepath)
         for mesh_obj in geom.meshes:
             obj = mesh.import_mesh_object(
                 mesh_obj,
@@ -219,6 +221,7 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
                 blender_materials,
                 new_collection,
                 bone_name_map=bone_name_map,
+                external_name=external_names.get(mesh_obj.name_hash, ''),
             )
             mat = blender_materials[mesh_obj.material.name]
             attr_list = [
@@ -242,6 +245,7 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
             new_collection['DSTS_backend_diagnostics'] = '\n'.join(error_list)
         from .native_rest_scale import partition_diagnostics
         handled, error_list = partition_diagnostics(error_list, rest_scale_profile)
+        error_list.extend(name_warnings)
         if handled:
             new_collection['DSTS_handled_bind_rest_notes'] = '\n'.join(handled)
             print(f'[DSTS] Preserved authored facial rest scale for {len(handled)} bind/rest differences; details retained on collection.')
@@ -251,6 +255,10 @@ def _import_geom(context, filepath, images_folder=None, *, include_scene_records
             print('[DSTS] Import warnings:', '\n'.join(error_list))
 
         import_animations_for_geom(filepath, armature_obj)
+        if armature_obj is not None and armature_obj.get('DSTS_rigid_scene'):
+            new_collection['DSTS_rigid_effect_name'] = Path(filepath).stem
+            from .effect_material_preview import configure_effect_materials
+            configure_effect_materials(new_collection, armature_obj, Path(filepath))
         if armature_obj is not None:
             from .texture_animation import configure_preview
             notes = configure_preview(new_collection, armature_obj, filepath)
@@ -381,6 +389,8 @@ def export_geom(collection):
 
     for obj in [o for o in collection.objects if o.type == "MESH"]:
         for mesh_out in mesh.export_mesh_object(obj, geom.skeleton, split_palettes=True):
+            if 'DSTS_external_mesh_hash' not in obj.data:
+                mesh_out.name = re.sub(r'(\.[0-9]{3})?$', '', mesh_out.name)
             mesh_out.material = object_to_mat[obj.data.materials[0]]
             geom.meshes.append(mesh_out)
 
@@ -393,7 +403,7 @@ def export_geom(collection):
                 raise ValueError('A native animated material was split into multiple targets; explicit float-channel remapping is required')
             channel.name_hash = next(iter(targets))
 
-    for obj in [*geom.skeleton.bones] + [*geom.materials] + [*geom.meshes]:
+    for obj in [*geom.skeleton.bones] + [*geom.materials]:
         obj.name = re.sub(r"(\.[0-9]{3})?$", "", obj.name)
 
     if 'DSTS_scene_source' in collection:

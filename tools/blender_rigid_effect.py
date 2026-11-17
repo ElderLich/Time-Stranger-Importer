@@ -29,23 +29,61 @@ from Time_Stranger_Importer.src.backend import load_format_modules
 from Time_Stranger_Importer.src.geom import import_geom, export_geom
 from Time_Stranger_Importer.src.animation import build_from_action
 from Time_Stranger_Importer.src.native_rest_scale import is_rest_track
+from Time_Stranger_Importer.src.nlst import external_mesh_names, matches_geom, nlst_rows, write_nlst
 
 formats = load_format_modules()[0]
 formats.set_throw_errors(True)
 native = formats.Geom.from_file(str(args.source))
 clip = addon._read_anim_file(str(args.source.with_suffix('.anim')))
+source_nlst = args.source.with_suffix('.nlst').read_text(encoding='utf-8-sig')
+source_names = external_mesh_names(nlst_rows(source_nlst))
+# Occupy an object name and a different mesh name to test Blender's suffixes.
+bpy.data.objects.new('bg', None)
+bpy.data.meshes.new('ken')
 collection = import_geom(bpy.context, str(args.source))
 rig = next(o for o in collection.objects if o.type == 'ARMATURE')
 meshes = [o for o in collection.objects if o.type == 'MESH']
 assert native.is_rigid_scene and rig.get('DSTS_rigid_scene')
 assert not collection.get('DSTS_import_warnings')
 assert len(meshes) == len(native.meshes)
+assert meshes[0].name == 'bg.001' and meshes[1].data.name == 'ken.001'
+assert all(not m.name and o.data['DSTS_external_mesh_name'] == source_names[m.name_hash]
+           for o, m in zip(meshes, native.meshes))
 assert all(o.parent_type == 'BONE' and len(o.vertex_groups) == 1 and not o.modifiers for o in meshes)
 tracks = rig.animation_data.nla_tracks
 motion = next(t for t in tracks if not is_rest_track(t))
 assert motion.strips[0].blend_type == 'REPLACE'
 indices = {b.name: i for i, b in enumerate(native.skeleton.bones)}
 axis = Matrix.Rotation(math.pi/2, 4, 'X')
+
+
+def check_component_inspection():
+    source_scene = bpy.context.scene
+    exportable = set(addon._exportable_geom_collections())
+    start_mutes = [track.mute for track in tracks]
+    assert bpy.ops.scene.dsts_inspect_rigid_components(collection_name=collection.name) == {'FINISHED'}
+    preview = bpy.context.scene
+    assert preview != source_scene and len(preview.objects) == len(meshes)
+    copies = list(preview.collection.objects)
+    for part, source_mesh in zip(copies, meshes):
+        assert part.type == 'MESH' and part.parent is None and part.matrix_world == Matrix.Identity(4)
+        assert part.data != source_mesh.data and part.active_material != source_mesh.active_material
+        assert len(part.data.vertices) == len(source_mesh.data.vertices)
+        assert all(a.co == b.co for a, b in zip(part.data.vertices, source_mesh.data.vertices))
+        nodes = part.active_material.node_tree.nodes
+        assert nodes.active.type == 'TEX_IMAGE' and nodes.active.image
+    copies[0].data.vertices[0].co.x += 1
+    assert copies[0].data.vertices[0].co != meshes[0].data.vertices[0].co
+    assert bpy.ops.scene.dsts_return_to_effect() == {'FINISHED'} and bpy.context.scene == source_scene
+    assert bpy.ops.scene.dsts_inspect_rigid_components(collection_name=collection.name) == {'FINISHED'}
+    assert bpy.context.scene == preview and len(preview.objects) == len(meshes)
+    assert bpy.ops.scene.dsts_return_to_effect() == {'FINISHED'}
+    assert set(addon._exportable_geom_collections()) == exportable
+    assert [track.mute for track in tracks] == start_mutes
+    print('PASS independent component inspection, scene reuse and return', flush=True)
+
+
+check_component_inspection()
 
 
 def sample(channels, index, frame, default, rotation=False):
@@ -118,9 +156,28 @@ reloaded = formats.Geom.from_file(str(out))
 assert reloaded.authored_bounds == native.authored_bounds
 assert reloaded.bind_pose_snapshot == native.bind_pose_snapshot
 assert len(reloaded.meshes) == len(native.meshes)
+assert all(dst.name_is_external and dst.name_hash == src.name_hash
+           for src, dst in zip(native.meshes, reloaded.meshes))
+assert nlst_rows(write_nlst(exported)) == nlst_rows(source_nlst)
+assert matches_geom(reloaded, source_nlst)
+assert not matches_geom(reloaded, source_nlst.replace('bg, 3a3b10de, null, mesh', 'wrong, 3a3b10de, null, mesh'))
 assert [b.name for b in reloaded.skeleton.bones] == list(indices)
 print('PASS GEOM bounds, bind matrices and rigid attachments roundtrip', flush=True)
 mesh = meshes[0]
+old_name = mesh.name
+mesh.name = 'Edited.Backdrop.001'
+renamed = export_geom(collection).meshes[0]
+assert renamed.name == mesh.name and not renamed.name_is_external and renamed.name_hash != native.meshes[0].name_hash
+mesh.name = old_name
+data_name = mesh.data.name
+mesh.data.name = 'Edited mesh data'
+assert export_geom(collection).meshes[0].name == mesh.data.name
+mesh.data.name = data_name
+mesh.data['DSTS_external_mesh_name'] = ''
+unknown = export_geom(collection).meshes[0]
+assert not unknown.name and unknown.name_hash == native.meshes[0].name_hash
+mesh.data['DSTS_external_mesh_name'] = source_names[unknown.name_hash]
+print('PASS source NLST identities, hash-only headers, optical type, Blender suffixes and explicit renames', flush=True)
 old_parent = mesh.parent_bone
 old_inverse = mesh.matrix_parent_inverse.copy()
 mesh.parent_bone = rig.data.bones[-1].name

@@ -17,6 +17,15 @@ Blender loads the root `__init__.py` for add-on metadata and registration. It al
 
 Blender-independent tests live under `tests/` and `tools/test_*.py`. Blender integration checks and the ZIP builder live under `tools/`. Use `build/` for generated test output and `dist/` for installable ZIPs. [Run the checks](#run-the-checks)
 
+## Rigid effect inspection in 1.5.9
+
+The bundled Windows backend is built from Time Stranger Formats `cab2298`.
+Its `Mesh.set_external_name` retains draw hashes stored without an embedded
+name. The importer resolves their Blender labels from the companion NLST.
+`src/effect_material_preview.py` builds color and coverage nodes for reviewed
+shader pairs. `src/operators/rigid_components.py` creates the separate static
+inspection scene. [Import and inspect a rigid effect](native-rigid-effects.md)
+
 ## Version 1.4 skill/effect additions
 
 The [skill/effect workflow](skill-effect-workflows.md) documents the new generic

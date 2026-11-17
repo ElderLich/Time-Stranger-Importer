@@ -13,11 +13,12 @@ import os
 from pathlib import Path
 import struct
 import tempfile
-from collections import Counter
 
 if __package__:
+    from .nlst import matches_geom, nlst_rows as _nlst_rows
     from .skin_palette import PALETTE_LIMIT
 else:
+    from nlst import matches_geom, nlst_rows as _nlst_rows
     from skin_palette import PALETTE_LIMIT
 
 def _name(value):
@@ -117,25 +118,6 @@ def _validate_texture(raw, name):
         raise ValueError(f'{name}: missing DDS dimensions or pixel payload')
 
 
-def _nlst_rows(text):
-    rows = []
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        parts = tuple(part.strip() for part in line.split(','))
-        if len(parts) != 4:
-            raise ValueError('Unsupported NLST record; model name list requires four columns')
-        name, hash_text, parent_text, kind = parts
-        name_hash = int(hash_text, 16)
-        parent_hash = None if parent_text.lower() == 'null' else int(parent_text, 16)
-        if not 0 <= name_hash <= 0xFFFFFFFF or parent_hash is not None and not 0 <= parent_hash <= 0xFFFFFFFF:
-            raise ValueError('NLST hash exceeds uint32')
-        rows.append((name, name_hash, parent_hash, kind))
-    # Native meshes can share names/hashes. Preserve multiplicity, and compare
-    # numeric hashes so native unpadded hex equals the exporter's padded form.
-    return Counter(rows)
-
-
 def plan_model_package(geom_path, resource_root=None, include_motions=True):
     """Resolve a model's exact file dependencies without writing anything.
 
@@ -146,7 +128,6 @@ def plan_model_package(geom_path, resource_root=None, include_motions=True):
     from .backend import load_format_modules
     from .anim.BinaryHundredLine import AnimFileBinary
     from .anim.InterfaceHundredLine import AnimFileHundredLine
-    from .nlst import write_nlst
 
     path = Path(geom_path).resolve()
     if path.suffix.lower() != '.geom':
@@ -179,7 +160,7 @@ def plan_model_package(geom_path, resource_root=None, include_motions=True):
     skinning = validate_runtime_skinning(raw, geom)
     nlst = path.with_suffix('.nlst')
     nlst_bytes = nlst.read_bytes()
-    if _nlst_rows(nlst_bytes.decode('utf-8-sig')) != _nlst_rows(write_nlst(geom)):
+    if not matches_geom(geom, nlst_bytes.decode('utf-8-sig')):
         raise ValueError('NLST names, hashes, parents or record types do not match this GEOM')
     files = {path.name: raw, nlst.name: nlst_bytes}
     sources = {path.name: str(path), nlst.name: str(nlst)}
