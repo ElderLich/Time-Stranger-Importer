@@ -1,6 +1,6 @@
 """Digimon New Century .glb -> Time Stranger import pipeline.
 
-One-click import of an nc-extractor model.glb into an export-ready DSTS scene:
+One-click import of a Digimon Asset Extractor model.glb into an export-ready DSTS scene:
 
 1.  Import the .glb with Blender's glTF importer (scene fps is set to 30 first
     so the NC 30 fps sample keys land on integer frames).
@@ -1180,7 +1180,7 @@ def _find_target_armature(new_objects):
     if best is None:
         raise NcImportError(
             "No armature with skinned body meshes found in the glb "
-            "(is this an nc-extractor model.glb?)"
+            "(is this a Digimon Asset Extractor model.glb?)"
         )
     if best_used_fallback:
         _log(
@@ -1642,7 +1642,7 @@ def _import_nc_model(context, filepath, donor_geom_path, build_outline, before):
             )
         # The glTF importer's object-transform conversion is the fixed Y-up ->
         # Z-up rotation; the node-derived root rest is only valid when the glb
-        # node hierarchy uses the same convention (true for nc-extractor
+        # node hierarchy uses the same convention (true for Digimon Asset Extractor
         # files). Otherwise fall back to a rest equal to the alignment
         # rotation (origin-anchored), which is always self-consistent.
         yup_to_zup = Matrix.Rotation(math.pi / 2.0, 4, 'X')

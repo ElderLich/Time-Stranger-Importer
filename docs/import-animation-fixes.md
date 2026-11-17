@@ -2,7 +2,7 @@
 
 ## New Century GLB orientation
 
-Some nc-extractor models import through Blender with the coordinate conversion
+Some Digimon Asset Extractor models import through Blender with the coordinate conversion
 already present in their bone rests. Applying an assumed object rotation again
 while sampling animations made the converted model tip over when an action was
 enabled. Shoutmon X4 (`m248`) reproduces this case. Shoutmon X7 (`u288`) also
