@@ -5,6 +5,7 @@
 | Task | Guide |
 | --- | --- |
 | Port a New Century Digimon, add its skills and art, and stage the mod | [Add a playable Digimon](add-a-playable-digimon.md) |
+| Port a ReArise actor and check its skill, camera, effect and sound bindings | [ReArise port workflow](rearise-port-workflow.md) |
 | Edit a native mesh or animation, choose a donor or export a moveset | [Models and animation](models-and-animation.md) |
 | Reimport a model after an orientation or facial rest-scale correction | [Import and animation corrections](import-animation-fixes.md) |
 | Animate a texture on a native material | [Texture animation](texture-animation.md) |

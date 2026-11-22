@@ -43,3 +43,5 @@ The importer supports skinned body draws with named `a01`, `a02` and similar atl
 For the full battle presentation, the ReArise timeline’s camera, visual effects and sounds need separate native assets and dispatch bindings in Time Stranger’s skill and effect records.
 
 For a second skill, check the actor clip in the ReArise skill timeline. A populated `BS02` can supply its own motion. Both WarGreymon X forms use `BA02` for their second skill, so that motion can be exported into Time Stranger’s `bs02` slot.
+
+Use **Battle Plan Only** in the ReArise import dialog to inspect a character’s source actions. [Plan the port and validate the staged skill bindings](rearise-port-workflow.md)

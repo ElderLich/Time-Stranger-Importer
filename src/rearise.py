@@ -12,6 +12,7 @@ from mathutils import Matrix, Vector
 from . import nc_glb as glb
 from .blender_compat import create_nla_track
 from .material import copy_native_material
+from .rearise_plan import motion_track
 from .mesh import set_vertex_layout_override
 from .scene_state import purge_new_orphans, rollback, snapshot
 
@@ -177,9 +178,7 @@ def _actions(doc, binary, indices, parents, root_parent, rest, rig, code):
         action['DSTS_source_clip'] = clip['name']
         glb._bake_source_world_poses(bpy.context, rig, {action: (None, frames)})
         # ReArise shares clips across species, with both "_rd" and bare slot names.
-        match = re.search(r'_([bf][a-z]\d+)(?:_?rd)?$', clip['name'], re.I)
-        name = f'{code}_{match.group(1).lower()}' if match else clip['name']
-        create_nla_track(rig, action, name, 1, blend_type='REPLACE')
+        create_nla_track(rig, action, motion_track(code, clip['name']), 1, blend_type='REPLACE')
 
 
 def import_model(context, path, donor_path, scale=1.0, outline=True):
