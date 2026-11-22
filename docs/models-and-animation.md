@@ -22,6 +22,8 @@ For an older scene with an untouched generated shell, reimport the original GLB 
 
 ## Edit and export an animation
 
+For missing guard, defeat, recovery and field motions, see [Author a missing moveset slot](author-a-moveset-slot.md).
+
 1. Import **Animation (.anim)** onto its matching skeleton. Each clip becomes a muted NLA track. Unmute the track you want to preview.
 2. Choose **Animation (.anim)** for one track or **All Animations (.anim)** for the set. Export uses the selected action slot, trim range, strip scale and scene FPS. Bake repeated, reversed, time-remapped or multi-strip tracks before exporting.
 3. Inspect indexed `DSTS_float_N` curves for camera or material float channels. Native material targets survive export and follow material renames. [Texture animation](texture-animation.md)

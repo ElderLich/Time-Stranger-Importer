@@ -167,6 +167,36 @@ assert strip.action_frame_start == 0 and strip.action_frame_end == 50
 assert strip.frame_end == 51
 print('PASS layered NLA strip keeps selected slot full duration')
 
+# Exercise the public moveset exporter with competing NLA tracks. Each source
+# has a different duration so the native readback identifies the chosen action.
+motion_tracks = {}
+for name, duration in (('bg01', 3), ('chr761_bg01', 5), ('chr037_bg01', 7), ('guard', 9),
+                       ('hurt', 11), ('idle', 13), ('bd03', 15), ('bs02', 17),
+                       ('skill2_move_to', 3), ('skill2_display', 5), ('skill2_move_back', 7),
+                       ('r761_fw01', 19), ('r037_fw01', 21)):
+    move = bpy.data.actions.new(name)
+    curve = create_action_fcurve(move, arm, arm.pose.bones[0].path_from_id() + '.location', 0)
+    curve.keyframe_points.insert(1, 0)
+    curve.keyframe_points.insert(duration, duration)
+    motion_tracks[name], _ = create_nla_track(arm, move, name, 1)
+with tempfile.TemporaryDirectory(prefix='dsts_moveset_') as folder:
+    def check_moveset(expected):
+        assert bpy.ops.export_scene.dsts_nc_moveset(directory=folder, armature_name=arm.name,
+                                                   target_chr='chr761') == {'FINISHED'}
+        for code, duration in expected.items():
+            clip = addon._read_anim_file(str(Path(folder) / f'chr761_{code}.anim'))
+            assert clip.frame_count == duration, (code, clip.frame_count, duration)
+
+    check_moveset({'bg01': 5, 'bd02': 11, 'bd03': 15, 'bs02': 17, 'r761_fw01': 19})
+    for name in ('chr761_bg01', 'bs02', 'bd03'):
+        arm.animation_data.nla_tracks.remove(motion_tracks.pop(name))
+    check_moveset({'bg01': 3, 'bs02': 13, 'bd03': 13})
+    arm.animation_data.nla_tracks.remove(motion_tracks.pop('bg01'))
+    check_moveset({'bg01': 9})
+for item in motion_tracks.values():
+    arm.animation_data.nla_tracks.remove(item)
+print('PASS authored moveset priorities, native readback and sequence/alias fallback')
+
 from Time_Stranger_Importer.src.geom import export_image_as_dds
 import struct
 with tempfile.TemporaryDirectory(prefix='dsts_texture_') as folder:

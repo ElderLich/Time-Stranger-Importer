@@ -224,14 +224,11 @@ def _track_name_to_moveset_code(track_name):
 
 
 def _candidate_track_names_for_code(ts_code, target_stem=""):
-    names = []
+    names = [f"{target_stem}_{ts_code}", ts_code] if target_stem else [ts_code]
     for code, aliases in _NC_MOVESET_MAP:
         if code == ts_code:
             names.extend(aliases)
             break
-    names.append(ts_code)
-    if target_stem:
-        names.append(f"{target_stem}_{ts_code}")
     return tuple(dict.fromkeys(name for name in names if name))
 
 
@@ -371,14 +368,24 @@ class DSTS_OT_ExportNcMoveset(Operator):
 
         tracks = {track.name.lower(): track for track in armature_obj.animation_data.nla_tracks if track.strips}
         tracks_by_code = {}
+        priorities = {}
         for track in armature_obj.animation_data.nla_tracks:
             if not track.strips:
                 continue
             prefix, code = _track_name_moveset_parts(track.name)
-            if prefix and prefix != target_stem:
+            if not code or (prefix and prefix != target_stem):
                 continue
-            if code and code not in tracks_by_code:
-                tracks_by_code[code] = track
+            output_code = code
+            ride = re.fullmatch(r"r\d+_(fn01|fw01)", code)
+            if ride and target_num:
+                output_code = f"r{target_num:03d}_{ride.group(1)}"
+            # Prefer the intended rider, then the target character's track.
+            # An exact track name outranks Blender's numbered duplicate.
+            exact_name = f"{prefix}_{code}" if prefix else code
+            priority = (code == output_code, bool(prefix), track.name.lower() == exact_name)
+            if output_code not in priorities or priority > priorities[output_code]:
+                priorities[output_code] = priority
+                tracks_by_code[output_code] = track
 
         exported = []
         missing = []
@@ -397,31 +404,20 @@ class DSTS_OT_ExportNcMoveset(Operator):
             if code not in export_codes:
                 export_codes.append(code)
 
-        for ts_code in export_codes:
-            output_code = ts_code
-            ride_match = re.fullmatch(r"r\d+_(fn01|fw01)", ts_code)
-            if ride_match and target_num:
-                output_code = f"r{target_num:03d}_{ride_match.group(1)}"
-
-            try:
-                sequence_source = _try_export_sequence(
-                    armature_obj,
-                    tracks,
-                    ts_code,
-                    output_code,
-                    target_stem,
-                    self.directory,
-                )
-            except Exception as exc:
-                print(f"[DSTS] Failed to export sequence {output_code}: {exc}")
-                sequence_source = None
-            if sequence_source:
-                exported.append(f"{output_code}<-{sequence_source}")
-                continue
-
-            candidates = _candidate_track_names_for_code(ts_code, target_stem=target_stem)
-            track = tracks_by_code.get(ts_code)
+        for output_code in export_codes:
+            track = tracks_by_code.get(output_code)
             if track is None:
+                try:
+                    sequence_source = _try_export_sequence(
+                        armature_obj, tracks, output_code, output_code, target_stem, self.directory,
+                    )
+                except Exception as exc:
+                    print(f"[DSTS] Failed to export sequence {output_code}: {exc}")
+                    sequence_source = None
+                if sequence_source:
+                    exported.append(f"{output_code}<-{sequence_source}")
+                    continue
+                candidates = _candidate_track_names_for_code(output_code, target_stem=target_stem)
                 track = _find_track_by_names(tracks, candidates)
             if track is None:
                 missing.append(output_code)
