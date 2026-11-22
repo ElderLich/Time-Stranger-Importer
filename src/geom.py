@@ -320,6 +320,29 @@ def _import_animation_to_nla(armature_obj, anim_name, anim_data, bone_names):
     create_nla_track(armature_obj, action, anim_name, 1, scale=scale, blend_type=native_blend_type(armature_obj))
 
 
+def _outline_export_width(material, objects, armature, is_nc):
+    from .skin_palette import skin_variant, stock_outline_width
+    width = stock_outline_width(material.shaders[0].name)
+    if width is None:
+        return None
+
+    # The game reuses input layouts by shader. A hand-made shell can use an
+    # existing line material with more or fewer influences than its donor.
+    required = 0
+    for obj in objects:
+        groups = {g.index for g in obj.vertex_groups if g.name in armature.data.bones}
+        required = max(required, max((sum(g.group in groups and g.weight > 0 for g in v.groups)
+                                      for v in obj.data.vertices), default=0))
+    if width < 2 and required <= 1 and not is_nc:
+        return width  # Keep the native compact rigid encodings.
+    target = max(width, min(4, required), 2)
+    if target != width:
+        for slot in material.active_shader_slots:
+            shader = material.shaders[slot]
+            shader.name = skin_variant(shader.name, target, include_rigid=width == 0)
+    return target
+
+
 def export_geom(collection):
     from .cyber_sleuth import is_cyber_sleuth, reject_export
     if is_cyber_sleuth(collection) or any(is_cyber_sleuth(obj) for obj in collection.all_objects):
@@ -368,9 +391,13 @@ def export_geom(collection):
         if mat not in materials:
             materials.append(mat)
     material_hash_map = {}
+    outline_widths = {}
     materials.sort(key=lambda mat: int(mat.get('DSTS_source_material_index', len(source_materials))))
     for mat in materials:
         mat_data = material.export_material(mat)
+        outline_widths[mat] = _outline_export_width(
+            mat_data, (o for o in meshes if o.data.materials[0] == mat),
+            armatures[0], 'DSTS_source_nc_glb' in collection)
         mat_data.name = re.sub(r"(\.[0-9]{3})?$", "", mat_data.name)
         index = mat.get('DSTS_source_material_index', -1)
         source_identity = (int(index) if isinstance(index, int) and 0 <= index < len(source_materials)
@@ -387,8 +414,9 @@ def export_geom(collection):
             material_hash_map.setdefault(int(mat['DSTS_source_name_hash']), set()).add(
                 zlib.crc32(mat_data.name.encode('utf-8')) ^ 0xFFFFFFFF)
 
-    for obj in [o for o in collection.objects if o.type == "MESH"]:
-        for mesh_out in mesh.export_mesh_object(obj, geom.skeleton, split_palettes=True):
+    for obj in meshes:
+        for mesh_out in mesh.export_mesh_object(obj, geom.skeleton, split_palettes=True,
+                                                outline_width=outline_widths[obj.data.materials[0]]):
             if 'DSTS_external_mesh_hash' not in obj.data:
                 mesh_out.name = re.sub(r'(\.[0-9]{3})?$', '', mesh_out.name)
             mesh_out.material = object_to_mat[obj.data.materials[0]]

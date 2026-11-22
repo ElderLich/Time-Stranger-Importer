@@ -78,6 +78,95 @@ def check_nc(result, baseline):
     print('PASS NC outline stride 44, tangent-bearing body buffer/indices and shader programs identical', flush=True)
 
 
+def field(mesh, name):
+    attrs, stride, raw = mesh.pack_vertices()
+    attr = next(a for a in attrs if a.atype == name)
+    dtype = np.dtype({'float': '<f4', 'float16': '<f2', 'uByte': 'u1'}[attr.dtype])
+    return np.ndarray((len(raw)//stride, attr.count), dtype=dtype, buffer=raw,
+                      offset=attr.offset, strides=(stride, dtype.itemsize))
+
+
+def check_inversion(result):
+    body, = [m for m in result.meshes if m.material.name != 'MTR_line01']
+    outline, = [m for m in result.meshes if m.material.name == 'MTR_line01']
+    # Compare each oriented face corner, including split normals at UV seams.
+    bi = np.asarray(body.get_indices()).reshape(-1, 3)
+    oi = np.asarray(outline.get_indices()).reshape(-1, 3)
+    body_pos, shell_pos = field(body, 'position')[bi], field(outline, 'position')[oi]
+    body_norm = field(body, 'normal')[bi].astype(np.float32)
+    shell_norm = field(outline, 'normal')[oi].astype(np.float32)
+    body_norm /= np.linalg.norm(body_norm, axis=2, keepdims=True)
+    shell_norm /= np.linalg.norm(shell_norm, axis=2, keepdims=True)
+    matches = np.zeros(len(bi), dtype=bool)
+    for offset in range(3):
+        order = (offset - np.arange(3)) % 3
+        # Blender encodes split normals in each polygon's new smoothing basis.
+        opposite = np.sum(-body_norm * shell_norm[:, order], axis=2)
+        matches |= (np.all(body_pos == shell_pos[:, order], axis=(1, 2)) &
+                    np.all(opposite >= np.cos(np.deg2rad(1)), axis=1))
+    assert matches.all(), f'{np.count_nonzero(~matches)} shell faces disagree with the inverted body'
+    print('PASS fresh outline matches every reversed body triangle, position and inverted corner normal', flush=True)
+
+
+def check_manual_shell(collection):
+    outline = next(o for o in collection.objects if o.type == 'MESH' and o.name.startswith('outline'))
+    mat = outline.data.materials[0]
+    bpy.data.objects.remove(outline, do_unlink=True)
+    body = next(o for o in collection.objects if o.type == 'MESH')
+    shell = body.copy()
+    shell.data = body.data.copy()
+    collection.objects.link(shell)
+    shell.data.name = 'handmade'
+    shell.data.materials[0] = mat
+    for layer in list(shell.data.color_attributes):
+        shell.data.color_attributes.remove(layer)
+    for name in ('uv2', 'uv3'):
+        if name not in shell.data.uv_layers:
+            shell.data.uv_layers.new(name=name)
+    bpy.ops.object.select_all(action='DESELECT')
+    shell.select_set(True)
+    bpy.context.view_layer.objects.active = shell
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.remove_doubles(threshold=0.0001)
+    bpy.ops.transform.shrink_fatten(value=0.006)
+    bpy.ops.mesh.flip_normals()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    # Exercise reusing a three-influence line material on a four-influence mesh.
+    for g in shell.vertex_groups:
+        g.remove([0])
+    for g in list(shell.vertex_groups)[:4]:
+        g.add([0], 0.25, 'REPLACE')
+    # Another piece sharing the material must use the same padded stream while
+    # retaining its authored line-width colors.
+    accent_mesh = bpy.data.meshes.new('accent')
+    accent_mesh.from_pydata([(0, 0, 0), (0, 1, 0), (1, 0, 0)], [], [(0, 1, 2)])
+    accent_mesh.uv_layers.new(name='uv1')
+    accent_mesh.materials.append(mat)
+    color = accent_mesh.color_attributes.new(name='Color', type='FLOAT_COLOR', domain='POINT')
+    color.data.foreach_set('color', [0.5, 0.25, 0.0, 1.0] * 3)
+    accent = bpy.data.objects.new('accent', accent_mesh)
+    collection.objects.link(accent)
+    accent.parent = body.parent
+    accent.vertex_groups.new(name=shell.vertex_groups[0].name).add([0, 1, 2], 1.0, 'REPLACE')
+    result = export(collection, 'handmade')
+    drawn, = [m for m in result.meshes if m.name == 'handmade']
+    native = fmt.Geom.from_file(str(donor_path.with_name('chr039.geom')))
+    reference = next(m for m in native.meshes if m.material.name == 'MTR_line01')
+    assert layout(drawn) == layout(reference)
+    assert [s.name for s in drawn.material.shaders] == [s.name for s in reference.material.shaders]
+    assert np.all(field(drawn, 'color') == 255)
+    accent_draw = next(m for m in result.meshes if m.name == 'accent')
+    assert layout(accent_draw) == layout(reference)
+    assert np.all(field(accent_draw, 'color') == [128, 64, 0, 255])
+    assert np.all(field(accent_draw, 'weight') == [1, 0, 0, 0])
+    expected = np.array([(v.co.x, v.co.z, -v.co.y) for v in shell.data.vertices])
+    actual = field(drawn, 'position')
+    assert np.allclose(actual.min(axis=0), expected.min(axis=0), atol=1e-6)
+    assert np.allclose(actual.max(axis=0), expected.max(axis=0), atol=1e-6)
+    print('PASS hand-built +0.006 shell kept edited bounds, white color and native four-weight stream/shaders', flush=True)
+
+
 if mode=='prepare':
     col = new_nc()
     export(col,'before')
@@ -90,7 +179,11 @@ elif mode=='verify':
     baseline = fmt.Geom.from_file(str(folder/'before.geom'))
     check_nc(export(reopen(),'after'),fmt.Geom.from_file(str(folder/'before-reopen.geom')))
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    check_nc(export(new_nc(),'fresh'),baseline)
+    col = new_nc()
+    fresh = export(col,'fresh')
+    check_nc(fresh,baseline)
+    check_inversion(fresh)
+    check_manual_shell(col)
     bpy.ops.wm.read_factory_settings(use_empty=True)
     # A legal native file with opposite tangent declarations on the same
     # material exercises both the native importer and the per-draw override.

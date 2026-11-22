@@ -6,16 +6,32 @@ PALETTE_LIMIT = 128
 _ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz#$[]{}+@=&'
 
 
-def skin_variant(key, influences):
-    """Word 3, bits 29..31 select body/outline VP blend count in native GEOM shader keys."""
-    if not 1 <= influences <= 4:
-        raise ValueError('Expected one to four skin influences')
+def _skin_word(key):
     if len(key) != 88 or key[18] != '_':
         raise ValueError(f'Invalid native shader key {key!r}')
     word = 0
     for c in key[19:25]:
         word = word * 46 + _ALPHABET.index(c)
-    if word >> 29 not in (1, 2, 3, 4):
+    return word
+
+
+def stock_outline_width(key):
+    """Recognize the stock MTR_line01 color pass independently of Blender names."""
+    if (not key.startswith('0f+w}200005@0e&k=g_')
+            or key[25:] != '0f&jc5000001_0000b60e&k=g0mm8k{_0t=}+x000000000005_2r}tw{000005'):
+        return None
+    word = _skin_word(key)
+    if word & 0x1fffffff or word >> 29 > 4:
+        return None
+    return word >> 29
+
+
+def skin_variant(key, influences, *, include_rigid=False):
+    """Word 3, bits 29..31 select body/outline VP blend count in native GEOM shader keys."""
+    if not 1 <= influences <= 4:
+        raise ValueError('Expected one to four skin influences')
+    word = _skin_word(key)
+    if not include_rigid and word >> 29 not in (1, 2, 3, 4):
         return key  # Empty or unrelated pass.
     value = (word & 0x1fffffff) | (influences << 29)
     encoded = ''

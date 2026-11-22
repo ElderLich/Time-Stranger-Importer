@@ -355,7 +355,7 @@ def export_vertex_layout(mesh):
 
 
 def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotation(math.radians(-90), 4, 'X'),
-                       *, split_palettes=False):
+                       *, split_palettes=False, outline_width=None):
     mesh = mesh_obj.data
     if 'DSTS_rigid_attachment' in mesh_obj:
         owner, name = mesh_obj.parent, mesh_obj.get('DSTS_rigid_attachment')
@@ -385,6 +385,16 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
         raw_colors = np.array([item.color[:] for item in attribute.data], dtype=np.float32)
         colors = raw_colors[loop_vertex] if attribute.domain == 'POINT' else raw_colors
     stride, attrs = export_vertex_layout(mesh)
+    if outline_width is not None:
+        # The writer derives the binary declaration from the supplied values.
+        # A duplicated body can have extra UV layers and no native Color. Both
+        # would shift the skin fields relative to other draws using this shader.
+        if 1 not in uv_arrays:
+            raise ValueError(f"Outline mesh '{mesh.name}' needs a uv1 layer for its native shader")
+        uv_arrays = {1: uv_arrays[1]}
+        attrs = [a for a in attrs if a.atype in ('position', 'normal', 'uv1', 'color', 'index', 'weight')]
+        if colors is None:
+            colors = np.ones((len(loop_vertex), 4), dtype=np.float32)
     tangents = None
     tangent_attr = next((at for at in attrs if at.atype == 'tangent'), None)
     if tangent_attr is not None and 1 in uv_arrays:
@@ -457,7 +467,10 @@ def export_mesh_object(mesh_obj, skeleton = None, coord_transform = Matrix.Rotat
         groups_per_vertex = max((len(weights_by_vertex[i]) for i in source_vertices), default=0)
         if not groups_per_vertex:
             raise ValueError(f"Mesh '{mesh.name}' has no weights referencing its armature")
-        groups_per_vertex = max(groups_per_vertex, int(mesh.get("DSTS_min_skin_influences", 0)))
+        if outline_width is not None:
+            groups_per_vertex = max(groups_per_vertex, outline_width)
+        else:
+            groups_per_vertex = max(groups_per_vertex, int(mesh.get("DSTS_min_skin_influences", 0)))
         vert_indices = np.zeros((vertex_count, groups_per_vertex), dtype=np.int32)
         vert_weights = np.zeros((vertex_count, groups_per_vertex), dtype=np.float32)
         for vi, source in enumerate(source_vertices):

@@ -24,10 +24,9 @@ One-click import of a Digimon Asset Extractor model.glb into an export-ready DST
     transforms so the existing .geom exporter works unmodified.
 5.  Borrow materials, per-mesh DSTS flags and Geom-collection metadata from a
     donor .geom (default chr050), rename the primary UV map to ``uv1``.
-6.  Optionally build the ``outline`` mesh: a joined copy of the body meshes
-    with the donor's MTR_line01 material and an all-white byte color attribute
-    (the DSTS outline shader reads that color; zeros render the model as a
-    solid black shell).
+6.  Optionally build the ``outline`` mesh at the body positions with inverted
+    winding and normals. The native MTR_line01 shader expands this shell using
+    its vertex color and the game's outline thickness.
 
 The math anchor points (validated against the chr110 fan port and the shipped
 chr110_bn01.anim):
@@ -1340,8 +1339,7 @@ def _ensure_white_color_attribute(mesh_data, name="Color"):
     """Create (or overwrite) a per-corner byte color attribute, all white.
 
     The .geom exporter reads ``mesh.color_attributes['Color']`` per loop; the
-    DSTS outline shader uses this color, and zeros make the outline shell
-    swallow the model (the in-game black-model bug).
+    DSTS outline shader multiplies its extrusion by the red channel.
     """
     existing = mesh_data.color_attributes.get(name)
     if existing is not None:
@@ -1349,6 +1347,22 @@ def _ensure_white_color_attribute(mesh_data, name="Color"):
     layer = mesh_data.color_attributes.new(name=name, type='BYTE_COLOR', domain='CORNER')
     layer.data.foreach_set("color", [1.0] * (len(mesh_data.loops) * 4))
     return layer
+
+
+def _invert_outline(mesh):
+    # Blender's Mesh.flip_normals reverses the polygon loops, but does not
+    # invert authored split normals. Carry each negated vector with its corner.
+    if not mesh.has_custom_normals:
+        mesh.flip_normals()
+        return
+    normals = [component for n in mesh.corner_normals for component in -n.vector]
+    layer = mesh.attributes.new("DSTS_inverted_normals", 'FLOAT_VECTOR', 'CORNER')
+    name = layer.name
+    layer.data.foreach_set("vector", normals)
+    mesh.flip_normals()
+    layer = mesh.attributes[name]
+    mesh.normals_split_custom_set([n.vector[:] for n in layer.data])
+    mesh.attributes.remove(mesh.attributes[name])
 
 
 def _build_outline_mesh(context, body_objects, armature_obj, outline_info, collection):
@@ -1379,6 +1393,7 @@ def _build_outline_mesh(context, body_objects, armature_obj, outline_info, colle
     modifier = outline.modifiers.new(name="Armature", type='ARMATURE')
     modifier.object = armature_obj
 
+    _invert_outline(outline.data)
     _ensure_white_color_attribute(outline.data)
     return outline
 

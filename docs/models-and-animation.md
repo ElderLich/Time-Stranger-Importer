@@ -14,6 +14,10 @@
 
 New Century meshes use their own indexed bone palettes. Borrowing a material preserves the target mesh’s palette mode. Native imports keep the original mode, and packaging checks its compatibility. See the [capability map](native-model-package.md#capability-map) for details on shaders, textures and dependencies.
 
+**Outline thickness.** The generated shell sits at the body’s rest positions. Its faces and corner normals point inward. In game, the stock `MTR_line01` shader adds `normal × vertex red × Fat` to each position before skinning. The Demon Lords and Four Sovereigns packs use `-0.003` in both columns of the actor’s `model_outline.mbe/000_model_outline_battle.ap.csv` row. A more negative thickness expands this shell farther. The Blender material preview hides this special draw.
+
+For an older scene with an untouched generated shell, reimport the original GLB with **Build Outline Mesh** enabled. To keep body edits, duplicate the edited body, keep its vertex groups and `uv1`, assign the donor line material and flip the faces inward once. Keep the shell at the body surface for the stock thickness. A manual Edit Mode shrink/fatten adjustment also survives export and adds to the in-game expansion. Export the GEOM and NLST for each model LOD your mod uses. The exporter supplies white if the shell lacks a `Color` layer and preserves authored colors when present.
+
 **Import Related Skill Scenes** opens unambiguous captured casts or approaches in separate scenes. To pick a cinematic yourself, use **File → Import → Digimon New Century → Skill Phases (.glb)** on the original library GLB. The preview plays the actor, its captured camera and audio where available, then uses its stand or idle motion if supplied. The import dialog can reveal the source helper hierarchy. Effect markers point to the assets to convert for the game. [Skill phases and effects](skill-effect-workflows.md)
 
 ## Edit and export an animation
