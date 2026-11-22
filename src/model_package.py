@@ -124,6 +124,9 @@ def _validate_texture(raw, name):
             raise ValueError(f'{name}: Time Stranger rejects DDS DXGI format {dxgi}. '
                              'Re-encode color as BC1 sRGB (72) or BC7 sRGB (99), '
                              'or use a supported linear format for data maps.')
+        if dxgi in (71, 72, 74, 75, 77, 78, 83, 95, 96, 98, 99) and (height % 4 or width % 4):
+            raise ValueError(f'{name}: block-compressed DDS base dimensions must be multiples of 4. '
+                             f'Got {width} × {height}. Use a 4 × 4 image for a solid color.')
 
 
 def plan_model_package(geom_path, resource_root=None, include_motions=True):
