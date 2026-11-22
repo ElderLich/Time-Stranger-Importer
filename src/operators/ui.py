@@ -235,6 +235,7 @@ def menu_func_import(self, context):
     self.layout.menu(DSTS_MT_ImportSubmenu.bl_idname)
     self.layout.menu(DSTS_MT_CyberSleuthImport.bl_idname)
     self.layout.menu(DSTS_MT_NewCenturyImport.bl_idname)
+    self.layout.operator('import_scene.dsts_rearise')
 
 
 def _order_digimon_import_menu():

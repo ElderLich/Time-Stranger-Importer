@@ -33,3 +33,11 @@ For missing guard, defeat, recovery and field motions, see [Author a missing mov
 For a native camera, import a rig such as `cam_chr039_bs01_pc.geom`. The DSTS sidebar exposes vertical FOV and near/far clip planes. Animated lens channels can override static FOV. Keep the rest rig and existing camera records intact. [Native camera fitting](native-camera-fit.md)
 
 For a captured New Century preview JSON, choose **File → Import → Digimon New Century → Cinematic Preview (.json)**. Its separate scene holds the source actor, camera, animated FOV, sound strips and effect cue markers. To bind that presentation to a native attack, use the [skill recipe](skill-conversion.md) and [native sequence](native-skill-sequence.md) workflows.
+
+## ReArise library models
+
+In **File → Import**, choose **Digimon ReArise Model and Motions (.glb)** and open the actor’s `model/model.glb` from the ReArise library. Choose a Time Stranger donor GEOM for its native body material and vertex layout. Set **Model and Motion Scale** to fit the intended actor. The tested WarGreymon X forms use `chr027.geom` and a scale of 1.767.
+
+The importer supports skinned body draws with named `a01`, `a02` and similar atlases. It imports their color textures, attachment bones and independently named motion tracks. Blended overlays and rigid attachments need their own native material or attachment mapping. Retarget the material texture names and use **Export All** for the model, name list, rest pose and captured motion files.
+
+For a second skill, check the actor clip in the ReArise skill timeline. A populated `BS02` can supply its own motion. Both WarGreymon X forms use `BA02` for their second skill, so that motion can be exported into Time Stranger’s `bs02` slot.

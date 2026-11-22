@@ -455,6 +455,8 @@ def _sample_gltf_track(times, values, interpolation, target_path, time):
 
     a = [float(v) for v in values[lo]]
     b = [float(v) for v in values[hi]]
+    if interpolation == "STEP":
+        return b if time == t1 else a
     if target_path == "rotation":
         return _slerp_xyzw(a, b, u)
     return [a[i] + u * (b[i] - a[i]) for i in range(len(a))]

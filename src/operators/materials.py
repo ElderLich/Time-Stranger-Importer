@@ -185,6 +185,7 @@ def _set_texture_colorspace(image, uniform):
         return
     colorspace = "sRGB" if uniform in {
         "DiffuseColor",
+        "ColorSampler",
         "OverlayMaskSampler",
         "LightPixelProj",
         "OverlayNormalSampler",

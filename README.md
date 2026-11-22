@@ -15,6 +15,7 @@ The included geometry backend supports Windows x64 with CPython 3.13. The projec
 | I want to… | Open this guide |
 | --- | --- |
 | Add a playable Digimon, from its library model to a staged mod | [New Century port walkthrough](docs/add-a-playable-digimon.md) |
+| Import a ReArise character and its captured motions | [ReArise library models](docs/models-and-animation.md#rearise-library-models) |
 | Edit a native model, retarget donor textures or export animations | [Models and animation](docs/models-and-animation.md) |
 | Watch a source attack with its cinematic camera and audio | [Preview a cinematic in Blender](docs/add-a-playable-digimon.md#preview-the-cinematic) |
 | Build a native skill with converted effects, hits and audio | [Skill recipes](docs/skill-conversion.md) · [Actor and effect bindings](docs/native-skill-bindings.md) |

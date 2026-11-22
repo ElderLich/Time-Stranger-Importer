@@ -193,6 +193,11 @@ def export_all_collection(collection, filepath, export_textures_as_png=False):
     exported_anims = 0
     if armatures:
         armature_obj = armatures[0]
+        if collection.get("DSTS_source_rearise_glb"):
+            from .animation import _build_rest_pose_anim_file
+            base_animation = _build_rest_pose_anim_file(armature_obj)
+            base_animation.to_file(os.path.splitext(filepath)[0] + ".anim")
+            exported_anims += 1
         if armature_obj.animation_data and armature_obj.animation_data.nla_tracks:
             for nla_track in armature_obj.animation_data.nla_tracks:
                 from ..native_rest_scale import is_rest_track

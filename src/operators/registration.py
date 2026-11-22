@@ -24,6 +24,7 @@ from .new_century import (
     DSTS_OT_NcGlbImport,
 )
 from .nla import DSTS_OT_CleanActionObjectTransforms, DSTS_OT_SetupBaseAnimationNla
+from .rearise import DSTS_OT_ReAriseImport
 from .rigid_components import DSTS_OT_InspectRigidComponents, DSTS_OT_ReturnToEffect
 from .rig import (
     DSTS_OT_ApplyArmatureObjectTransforms,
@@ -54,6 +55,7 @@ CLASSES = (
     DSTS_OT_InspectRigidComponents,
     DSTS_OT_ReturnToEffect,
     DSTS_OT_NcGlbImport,
+    DSTS_OT_ReAriseImport,
     DSTS_OT_AnimImport,
     DSTS_OT_AnimExport,
     DSTS_OT_AnimExportAll,
