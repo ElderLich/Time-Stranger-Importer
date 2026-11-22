@@ -40,4 +40,6 @@ In **File → Import**, choose **Digimon ReArise Model and Motions (.glb)** and 
 
 The importer supports skinned body draws with named `a01`, `a02` and similar atlases. It imports their color textures, attachment bones and independently named motion tracks. Blended overlays and rigid attachments need their own native material or attachment mapping. Retarget the material texture names and use **Export All** for the model, name list, rest pose and captured motion files.
 
+For the full battle presentation, the ReArise timeline’s camera, visual effects and sounds need separate native assets and dispatch bindings in Time Stranger’s skill and effect records.
+
 For a second skill, check the actor clip in the ReArise skill timeline. A populated `BS02` can supply its own motion. Both WarGreymon X forms use `BA02` for their second skill, so that motion can be exported into Time Stranger’s `bs02` slot.
