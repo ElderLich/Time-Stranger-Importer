@@ -7,10 +7,17 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src.rearise_plan import _group_damage_missing_contact, inspect_actor
+from src.rearise_plan import _group_damage_missing_contact, body_atlas, inspect_actor
 
 
 class ReArisePlanTests(unittest.TestCase):
+    def test_legacy_and_regional_body_atlases(self):
+        for name in ('a008a_c00', 'b009a_c00', 'e058a01_rd', 'chr108a01'):
+            with self.subTest(name=name):
+                self.assertEqual(body_atlas({'name': name}), 'a01')
+        self.assertIsNone(body_atlas({'name': 'chr007a01', 'alphaMode': 'BLEND'}))
+        self.assertIsNone(body_atlas({'name': 'eff_fir_02'}))
+
     def test_shared_clip_and_authored_bs02_are_distinct(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -13,6 +13,19 @@ def motion_track(code, clip):
     return f'{code}_{match.group(1).lower()}' if match else clip
 
 
+def body_atlas(mat):
+    if mat.get('alphaMode') == 'BLEND':
+        return None
+    name = mat['name']
+    atlas = re.search(r'(a\d\d)(?:_rd)?$', name, re.I)
+    if atlas:
+        return atlas.group(1).lower()
+    # Baby captures a008 and b009 use a_c00 for their single cutout body.
+    if re.fullmatch(r'[ab]\d{3}a_c00', name, re.I):
+        return 'a01'
+    return None
+
+
 def inspect_actor(path):
     path = Path(path).resolve()
     with path.open('rb') as stream:
@@ -60,7 +73,7 @@ def inspect_actor(path):
             manual.append(f'Rigid attachment: {node["name"]}')
         for primitive in doc['meshes'][node['mesh']]['primitives']:
             mat = doc['materials'][primitive['material']]
-            if not re.search(r'a\d\d$', mat['name'], re.I) or mat.get('alphaMode') == 'BLEND':
+            if not body_atlas(mat):
                 manual.append(f'Native material mapping: {mat["name"]}')
     return {'source_model': code, 'glb': str(path), 'motion_tracks': sorted({motion_track(code, c) for c in embedded}),
             'manual_model_work': sorted(set(manual)), 'actions': actions}

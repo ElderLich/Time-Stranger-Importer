@@ -100,6 +100,7 @@ def _strip_texture_extension(stem):
 
 def _default_texture_stem_for_uniform(target_stem, uniform):
     suffix_by_uniform = {
+        "ColorSampler": "a01",
         "DiffuseColor": "a01",
         "OverlayColorSampler": "a01",
         "OverlayColorSampler2": "a01",

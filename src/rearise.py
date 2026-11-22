@@ -12,7 +12,7 @@ from mathutils import Matrix, Vector
 from . import nc_glb as glb
 from .blender_compat import create_nla_track
 from .material import copy_native_material
-from .rearise_plan import motion_track
+from .rearise_plan import body_atlas, motion_track
 from .mesh import set_vertex_layout_override
 from .scene_state import purge_new_orphans, rollback, snapshot
 
@@ -22,14 +22,17 @@ def _rows(doc, binary, index):
     if accessor['componentType'] == 5126:
         return glb._read_float_accessor(doc, binary, index)
     fmt = {5121: 'B', 5123: 'H', 5125: 'I'}[accessor['componentType']]
-    count = {'SCALAR': 1, 'VEC4': 4}[accessor['type']]
-    if accessor.get('sparse') or accessor.get('normalized'):
-        raise ValueError('Unsupported sparse or normalized integer accessor')
+    count = {'SCALAR': 1, 'VEC3': 3, 'VEC4': 4}[accessor['type']]
+    if accessor.get('sparse'):
+        raise ValueError('Unsupported sparse integer accessor')
     record = struct.Struct('<' + fmt * count)
     view = doc['bufferViews'][accessor['bufferView']]
     start = view.get('byteOffset', 0) + accessor.get('byteOffset', 0)
     stride = view.get('byteStride', record.size)
     values = [record.unpack_from(binary, start + i * stride) for i in range(accessor['count'])]
+    if accessor.get('normalized'):
+        maximum = (1 << (8 * struct.calcsize(fmt))) - 1
+        values = [tuple(x / maximum for x in row) for row in values]
     return [item[0] for item in values] if count == 1 else values
 
 
@@ -106,6 +109,12 @@ def _mesh(context, collection, rig, doc, binary, primitive, skin, transform, mat
     for loop in mesh.loops:
         u, v = attrs['TEXCOORD_0'][used[loop.vertex_index]]
         uv.data[loop.index].uv = (u, 1 - v)
+    if 'COLOR_0' in primitive['attributes']:
+        tint = _rows(doc, binary, primitive['attributes']['COLOR_0'])
+        colors = mesh.color_attributes.new(name='Color', type='FLOAT_COLOR', domain='POINT')
+        for dest, i in enumerate(used):
+            rgba = list(tint[i])
+            colors.data[dest].color = rgba if len(rgba) == 4 else [*rgba, 1.]
     obj = bpy.data.objects.new(name, mesh)
     collection.objects.link(obj)
     obj.parent = rig
@@ -181,13 +190,38 @@ def _actions(doc, binary, indices, parents, root_parent, rest, rig, code):
         create_nla_track(rig, action, motion_track(code, clip['name']), 1, blend_type='REPLACE')
 
 
-def import_model(context, path, donor_path, scale=1.0, outline=True):
+def _skin_bind_transforms(doc, binary, rest):
+    """Find one native bind pose and one mesh-to-bind transform per glTF skin."""
+    assigned = set()
+    transforms = {}
+    for index in dict.fromkeys(node['skin'] for node in doc['nodes'] if 'mesh' in node and 'skin' in node):
+        skin = doc['skins'][index]
+        matrices = {i: Matrix([row[k:k+4] for k in range(0, 16, 4)]).transposed()
+                    for i, row in zip(skin['joints'], _rows(doc, binary, skin['inverseBindMatrices']), strict=True)}
+        anchor = next((i for i in matrices if i in assigned), skin['joints'][0])
+        transform = rest[anchor] @ matrices[anchor]
+        for i, inverse_bind in matrices.items():
+            current = rest[i] @ inverse_bind
+            if max(abs(a-b) for r1,r2 in zip(transform, current) for a,b in zip(r1,r2)) > .002:
+                if i in assigned:
+                    raise ValueError('Shared joint has incompatible bind poses across ReArise skins')
+                # The default scene can already be posed. glTF skinning applies
+                # jointWorld(t) * inverseBind * vertex even at the first frame.
+                # Solving for rest preserves that deformation in every motion.
+                rest[i] = transform @ inverse_bind.inverted()
+        assigned.update(matrices)
+        transforms[index] = transform
+    return transforms
+
+
+def import_model(context, path, donor_path, scale=1.0, outline=True, *, outline_exclusions=()):
     doc, binary = glb.read_glb_chunks(str(path))
     indices, parents = _rig_nodes(doc)
     nodes = doc['nodes']
     worlds = glb._glb_node_worlds(doc, range(len(nodes)))
     conversion = Matrix.Rotation(math.pi / 2, 4, 'X') @ Matrix.Scale(scale, 4)
     rest = {i: conversion @ worlds[i] for i in indices}
+    skin_transforms = _skin_bind_transforms(doc, binary, rest)
     root_parent = conversion @ worlds.get(parents.get(indices[0]), Matrix.Identity(4))
     before = snapshot()
     scene = context.scene
@@ -214,31 +248,28 @@ def import_model(context, path, donor_path, scale=1.0, outline=True):
             if 'skin' not in node:
                 raise ValueError('Separate rigid ReArise draw requires an attachment binding')
             skin = doc['skins'][node['skin']]
-            binds = _rows(doc, binary, skin['inverseBindMatrices'])
-            transforms = [rest[i] @ Matrix([row[k:k+4] for k in range(0, 16, 4)]).transposed()
-                          for i, row in zip(skin['joints'], binds, strict=True)]
-            transform = transforms[0]
-            if any(max(abs(a-b) for r1, r2 in zip(transform, m) for a,b in zip(r1,r2)) > 0.002 for m in transforms):
-                raise ValueError('Skin bind matrices disagree with the captured rest pose')
+            transform = skin_transforms[node['skin']]
             for p in doc['meshes'][node['mesh']]['primitives']:
                 mat_id = p['material']
                 descriptor = doc['materials'][mat_id]
                 name = descriptor['name']
-                atlas = re.search(r'a\d\d$', name, re.I)
-                if not atlas or descriptor.get('alphaMode') == 'BLEND':
+                atlas = body_atlas(descriptor)
+                if not atlas:
                     raise ValueError(f'{name} needs an explicit native material mapping')
                 if mat_id not in materials:
                     mat = copy_native_material(donor['material'], name)
-                    mat['DSTS_nc_atlas'] = atlas.group().lower()
+                    mat['DSTS_nc_atlas'] = atlas
                     _bind_diffuse(mat, doc, binary, descriptor)
                     materials[mat_id] = mat
                 obj = _mesh(context, collection, rig, doc, binary, p, skin, transform,
-                            materials[mat_id], donor, atlas.group().lower())
+                            materials[mat_id], donor, atlas)
                 objects.append(obj)
         if not objects:
             raise ValueError('ReArise GLB contains no body draws')
         if outline and line:
-            objects.append(glb._build_outline_mesh(context, objects, rig, line, collection))
+            solid = [o for o in objects if o.data.materials[0].name not in outline_exclusions]
+            if solid:
+                objects.append(glb._build_outline_mesh(context, solid, rig, line, collection))
         for obj in objects:
             glb._match_skin_programs(obj, rig, str(donor_path))
         _actions(doc, binary, indices, parents, root_parent, rest, rig, code)
