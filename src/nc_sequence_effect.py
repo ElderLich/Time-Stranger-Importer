@@ -52,8 +52,12 @@ def build_effect(job, phases, output, directory):
                 life = ('emitter0','el')
                 if source.value((key,'common',*life,'el_type')) != 0 or source.value((key,'common',*life,'el_random')) != 0:
                     raise ValueError(f'{identity}: unsupported emitter lifetime for a bounded phase')
-                overrides[(*life,'el_type')] = 1
-                overrides[(*life,'el_life')] = duration-start
+                # el_type=1 repeats for the emitter's lifetime. Bound the
+                # spawned Figure instead, preserving any earlier authored end.
+                model_limit = ('emitter0','daectrl','l')
+                original_limit = source.value((key,'common',*model_limit))
+                end_frame = duration-start-1
+                overrides[model_limit] = end_frame if original_limit < 0 else min(original_limit,end_frame)
 
             def transfer(node, path):
                 name = source._text(node.key)

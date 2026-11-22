@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'src'))
 sys.path.insert(0, str(ROOT / 'tools'))
 from test_nc_preview_source import write_glb
@@ -65,6 +66,30 @@ def bson_fixture(with_audio=False):
 
 
 class SkillConversionTests(unittest.TestCase):
+    def test_bounded_sequence_stops_its_drawable_without_reemitting(self):
+        from src.nc_sequence_effect import build_effect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            raw, _ = compose_event(bson_fixture(), ['planet'], socket='@root',
+                                   duration_frames=24, figure_start_frames=[3])
+            for count, original_limit, expected_limit in [(10,-1,6),(10,2,2),(4,-1,0)]:
+                with self.subTest(count=count, original_limit=original_limit):
+                    source = EffectDocument.from_bytes(raw)
+                    prefix = (source.sets[0].name,'common','emitter0')
+                    node = source._get((*prefix,'daectrl','l'))
+                    struct.pack_into('<i',source._prefix,node.start+8,original_limit)
+                    (folder/'input.bson').write_bytes(source.to_bytes())
+                    phase = dict(effect='input.bson',offset=5,count=count,hold=0,bound_effect_to_phase=True)
+                    build_effect(dict(stem='test'),[phase],folder,folder)
+                    output = EffectDocument.read(folder/'ef_b_test.bson')
+                    self.assertEqual(output.value(('mf',)),5+count)
+                    self.assertEqual(output.value((output.sets[0].name,'common','so')),8)
+                    self.assertEqual(output.value((*prefix,'el','el_type')),0)
+                    self.assertEqual(output.value((*prefix,'el','el_life')),0)
+                    self.assertEqual(output.value((*prefix,'ec','ec_count')),1)
+                    self.assertEqual(output.value((*prefix,'daectrl','l')),expected_limit)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
