@@ -116,6 +116,14 @@ def _validate_texture(raw, name):
     height, width = struct.unpack_from('<II', raw, 12)
     if not height or not width or len(raw) <= (148 if raw[84:88] == b'DX10' else 128):
         raise ValueError(f'{name}: missing DDS dimensions or pixel payload')
+    if raw[84:88] == b'DX10':
+        # PC DDS reader 0x14038FA50 dispatches these DXGI codes. Uncompressed
+        # sRGB 29/91 take its failure branch even when Blender decodes them.
+        dxgi = struct.unpack_from('<I', raw, 128)[0]
+        if dxgi not in (28, 41, 54, 71, 72, 74, 75, 77, 78, 83, 87, 95, 96, 98, 99):
+            raise ValueError(f'{name}: Time Stranger rejects DDS DXGI format {dxgi}. '
+                             'Re-encode color as BC1 sRGB (72) or BC7 sRGB (99), '
+                             'or use a supported linear format for data maps.')
 
 
 def plan_model_package(geom_path, resource_root=None, include_motions=True):

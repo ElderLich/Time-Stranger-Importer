@@ -85,6 +85,16 @@ with tempfile.TemporaryDirectory(prefix='dsts_model_package_') as temp:
     rejects(lambda: package_native_model(model, temp/'bad_shader', native, False), 'DXBC')
     assert not (temp/'bad_shader').exists()
     custom.unlink()
+    texture = next(rel for rel in report['external_native_dependencies']
+                   if rel.startswith('images/') and (native/rel).read_bytes()[84:88] == b'DX10')
+    bad_texture = source/texture
+    bad_texture.parent.mkdir(exist_ok=True)
+    invalid_dds = bytearray((native/texture).read_bytes())
+    for dxgi in (29, 91):
+        struct.pack_into('<I', invalid_dds, 128, dxgi)
+        bad_texture.write_bytes(invalid_dds)
+        rejects(lambda: plan_model_package(model, native, False), f'rejects DDS DXGI format {dxgi}')
+    bad_texture.unlink()
     rejects(lambda: package_native_model(model, temp/'missing', None, False), 'Missing native dependency')
     assert not (temp/'missing').exists()
     print('PASS local dependency precedence, missing shader/texture rejection, no partial output')

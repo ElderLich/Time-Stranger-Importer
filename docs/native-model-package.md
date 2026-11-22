@@ -81,6 +81,11 @@ No payload is rewritten; existing folders are rejected.
   Local files take precedence; a broken local override cannot silently fall
   back to a native file. Shader DXBC table/chunk bounds and basic DDS header,
   dimensions and pixel-payload presence are checked.
+- DX10 texture headers must use a format accepted by the PC image reader.
+  Its dispatch table at `0x14038FA50` rejects uncompressed sRGB formats 29
+  and 91, which can leave the character black in game. For body color, stock
+  models use BC1 sRGB (72) or BC7 sRGB (99). Use linear formats for normal
+  maps and masks.
 - Every copied payload file has a manifest SHA256 and is verified after writing.
 
 The DDS check is not a full mip/decompression validation, and the DXBC check

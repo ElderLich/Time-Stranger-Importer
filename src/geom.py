@@ -493,10 +493,12 @@ def export_textures(collection, output_dir, as_png=False):
 
 def export_image_as_dds(image, output_path):
     import numpy as np
+    from .model_package import _validate_texture
 
     if image.packed_file and not image.is_dirty:
         data = image.packed_file.data
         if data[:4] == b'DDS ':
+            _validate_texture(data, image.name)
             with open(output_path, 'wb') as f:
                 f.write(data)
             return
@@ -505,8 +507,9 @@ def export_image_as_dds(image, output_path):
         src_path = bpy.path.abspath(image.filepath)
         if os.path.isfile(src_path):
             with open(src_path, 'rb') as f:
-                header = f.read(4)
-            if header == b'DDS ':
+                header = f.read(149)
+            if header[:4] == b'DDS ':
+                _validate_texture(header, image.name)
                 import shutil
                 if os.path.normcase(os.path.abspath(src_path)) != os.path.normcase(os.path.abspath(output_path)):
                     shutil.copy2(src_path, output_path)
