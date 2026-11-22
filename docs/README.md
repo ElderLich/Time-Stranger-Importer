@@ -16,6 +16,7 @@
 | Task | Guide |
 | --- | --- |
 | Choose a captured cast, approach, return or cinematic and inspect its cues | [Skill phases and effect graphs](skill-effect-workflows.md) |
+| Compare official attacks with the Demon Lords and Four Sovereigns ports | [Official attack references](official-attack-references.md) |
 | Map a captured phase and build a native review candidate | [Skill recipes](skill-conversion.md) |
 | Bind the actor motion, caster and target effects, hit frames and audio | [Native skill bindings](native-skill-bindings.md) |
 | Combine phases, cameras and effects into one attack | [Native skill sequences](native-skill-sequence.md) |
